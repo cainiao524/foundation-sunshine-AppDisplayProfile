@@ -1,4 +1,4 @@
-name: 同步上游并构建功能版
+name: 同步上游正式版并构建功能版
 
 on:
   schedule:
@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
     inputs:
       force-build:
-        description: '即使上游没有更新也生成一次安装包'
+        description: '即使没有新的上游正式版也生成一次安装包'
         required: false
         default: false
         type: boolean
@@ -21,6 +21,7 @@ concurrency:
 
 env:
   FEATURE_BRANCH: feature/app-display-profile
+  RELEASE_STATE_FILE: .github/upstream-stable-release
   UPSTREAM_REPOSITORY: AlkaidLab/foundation-sunshine
 
 jobs:
@@ -30,6 +31,7 @@ jobs:
     outputs:
       changed: ${{ steps.sync.outputs.changed }}
       build_version: ${{ steps.sync.outputs.build_version }}
+      release_tag: ${{ steps.sync.outputs.release_tag }}
     steps:
       - name: 检出功能分支
         uses: actions/checkout@v4
@@ -38,7 +40,7 @@ jobs:
           fetch-depth: 0
           token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: 合入上游并更新镜像分支
+      - name: 合入最新正式版并更新镜像分支
         id: sync
         shell: bash
         env:
@@ -48,41 +50,88 @@ jobs:
           git config user.name 'github-actions[bot]'
           git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
           git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
-          git fetch --prune --tags upstream master
+          git fetch --prune --tags upstream
+          git fetch origin master
 
-          before="$(git rev-parse HEAD)"
-          upstream_commit="$(git rev-parse upstream/master)"
+          release_tag="$(gh api "repos/${UPSTREAM_REPOSITORY}/releases/latest" --jq '.tag_name')"
+          if [ -z "$release_tag" ]; then
+            echo '::error::上游没有可用的正式发布。'
+            exit 1
+          fi
+          if ! git rev-parse --verify --quiet "refs/tags/${release_tag}^{commit}" >/dev/null; then
+            echo "::error::无法解析上游正式版标签：${release_tag}"
+            exit 1
+          fi
+          if [ ! -f "$RELEASE_STATE_FILE" ]; then
+            echo "::error::缺少正式版同步状态文件：${RELEASE_STATE_FILE}"
+            exit 1
+          fi
 
-          git push origin "${upstream_commit}:refs/heads/master"
+          release_commit="$(git rev-parse "refs/tags/${release_tag}^{commit}")"
+          fork_master="$(git rev-parse origin/master)"
+          previous_release_tag="$(tr -d '\r\n' < "$RELEASE_STATE_FILE")"
 
-          if ! git merge --no-edit upstream/master; then
-            git merge --abort || true
-            echo '::error::功能分支与上游发生冲突，需要人工处理。'
+          release_ready=false
+          master_status=unchanged
+          if [ "$fork_master" = "$release_commit" ]; then
+            master_status=at-release
+            release_ready=true
+          elif git merge-base --is-ancestor "$fork_master" "$release_commit"; then
+            git push origin "${release_commit}:refs/heads/master"
+            master_status=updated-to-release
+            release_ready=true
+          elif git merge-base --is-ancestor "$release_commit" "$fork_master"; then
+            # 迁移前已经同步过开发版源码。正式版尚未追上时只记录版本，绝不回退分支。
+            master_status=release-behind-current
+          else
+            echo "::error::镜像 master 与上游正式版 ${release_tag} 发生分叉，需要人工处理。"
+            exit 1
+          fi
+
+          changed=false
+          state_changed=false
+          if [ "$release_tag" != "$previous_release_tag" ]; then
+            if [ "$release_ready" = true ]; then
+              if ! git merge --no-edit "$release_commit"; then
+                git merge --abort || true
+                echo "::error::功能分支与上游正式版 ${release_tag} 发生冲突，需要人工处理。"
+                exit 1
+              fi
+              changed=true
+            else
+              echo "::warning::正式版 ${release_tag} 仍落后于迁移前的代码底座，本次只记录版本，不回退也不构建。"
+            fi
+
+            printf '%s\n' "$release_tag" > "$RELEASE_STATE_FILE"
+            git add "$RELEASE_STATE_FILE"
+            git commit -m "ci: 记录上游正式版 ${release_tag}"
+            git push origin "HEAD:refs/heads/${FEATURE_BRANCH}"
+            state_changed=true
+          elif [ "$release_ready" = true ] && ! git merge-base --is-ancestor "$release_commit" HEAD; then
+            echo "::error::状态文件记录了 ${release_tag}，但功能分支没有包含对应提交。"
             exit 1
           fi
 
           after="$(git rev-parse HEAD)"
-          changed=false
-          if [ "$after" != "$before" ]; then
-            git push origin "HEAD:refs/heads/${FEATURE_BRANCH}"
-            changed=true
+          if [ "$release_ready" = true ]; then
+            build_version="app-display-${release_tag}"
+          else
+            build_version="app-display-current-${after:0:8}"
           fi
-
-          upstream_tag="$(git describe --tags --abbrev=0 upstream/master 2>/dev/null || true)"
-          if [ -z "$upstream_tag" ]; then
-            upstream_tag="upstream-${upstream_commit:0:8}"
-          fi
-          build_version="app-display-${upstream_tag}"
 
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
           echo "build_version=$build_version" >> "$GITHUB_OUTPUT"
+          echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           {
             echo '### 同步结果'
             echo
-            echo "- 上游提交：\`$upstream_commit\`"
+            echo "- 最新正式版：\`$release_tag\`"
+            echo "- 正式版提交：\`$release_commit\`"
             echo "- 功能分支提交：\`$after\`"
             echo "- 产物版本：\`$build_version\`"
-            echo "- 是否发现更新：\`$changed\`"
+            echo "- 是否合入新正式版：\`$changed\`"
+            echo "- 是否更新版本记录：\`$state_changed\`"
+            echo "- 镜像 master 状态：\`$master_status\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   dispatch-build:

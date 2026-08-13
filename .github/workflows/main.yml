@@ -319,12 +319,6 @@ jobs:
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
 
-      - name: Generate Checksums
-        shell: pwsh
-        run: |
-          # Generate SHA256 checksums.
-          .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
-
       - name: Rename release assets
         shell: msys2 {0}
         run: |
@@ -342,6 +336,12 @@ jobs:
           # 重命名安装包和便携版
           mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine.${NEWTAG}.WindowsInstaller.exe"
           mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.WindowsPortable.zip"
+
+      - name: Generate Checksums
+        shell: pwsh
+        run: |
+          # Generate SHA256 checksums after the assets have their final names.
+          .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Upload Artifacts
         uses: actions/upload-artifact@v4
