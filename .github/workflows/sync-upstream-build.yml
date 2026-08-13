@@ -1,0 +1,108 @@
+name: 同步上游并构建功能版
+
+on:
+  schedule:
+    - cron: '23 */6 * * *'
+  workflow_dispatch:
+    inputs:
+      force-build:
+        description: '即使上游没有更新也生成一次安装包'
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  actions: write
+  contents: write
+
+concurrency:
+  group: sync-upstream-app-display
+  cancel-in-progress: false
+
+env:
+  FEATURE_BRANCH: feature/app-display-profile
+  UPSTREAM_REPOSITORY: AlkaidLab/foundation-sunshine
+
+jobs:
+  sync:
+    name: 同步分支
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.sync.outputs.changed }}
+      build_version: ${{ steps.sync.outputs.build_version }}
+    steps:
+      - name: 检出功能分支
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ env.FEATURE_BRANCH }}
+          fetch-depth: 0
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: 合入上游并更新镜像分支
+        id: sync
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          git config user.name 'github-actions[bot]'
+          git config user.email '41898282+github-actions[bot]@users.noreply.github.com'
+          git remote add upstream "https://github.com/${UPSTREAM_REPOSITORY}.git"
+          git fetch --prune --tags upstream master
+
+          before="$(git rev-parse HEAD)"
+          upstream_commit="$(git rev-parse upstream/master)"
+
+          git push origin "${upstream_commit}:refs/heads/master"
+
+          if ! git merge --no-edit upstream/master; then
+            git merge --abort || true
+            echo '::error::功能分支与上游发生冲突，需要人工处理。'
+            exit 1
+          fi
+
+          after="$(git rev-parse HEAD)"
+          changed=false
+          if [ "$after" != "$before" ]; then
+            git push origin "HEAD:refs/heads/${FEATURE_BRANCH}"
+            changed=true
+          fi
+
+          upstream_tag="$(git describe --tags --abbrev=0 upstream/master 2>/dev/null || true)"
+          if [ -z "$upstream_tag" ]; then
+            upstream_tag="upstream-${upstream_commit:0:8}"
+          fi
+          build_version="app-display-${upstream_tag}"
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+          echo "build_version=$build_version" >> "$GITHUB_OUTPUT"
+          {
+            echo '### 同步结果'
+            echo
+            echo "- 上游提交：\`$upstream_commit\`"
+            echo "- 功能分支提交：\`$after\`"
+            echo "- 产物版本：\`$build_version\`"
+            echo "- 是否发现更新：\`$changed\`"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  dispatch-build:
+    name: 启动功能版构建
+    needs: sync
+    if: needs.sync.outputs.changed == 'true' || inputs['force-build'] == true
+    runs-on: ubuntu-latest
+    steps:
+      - name: 启动现有构建工作流
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          BUILD_VERSION: ${{ needs.sync.outputs.build_version }}
+        run: |
+          gh workflow run main.yml \
+            --repo "${{ github.repository }}" \
+            --ref "${FEATURE_BRANCH}" \
+            -f "build-version=${BUILD_VERSION}"
+          {
+            echo '### 构建已启动'
+            echo
+            echo "构建版本：\`${BUILD_VERSION}\`"
+          } >> "$GITHUB_STEP_SUMMARY"

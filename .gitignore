@@ -38,9 +38,12 @@
 
 # build directories
 build/
+build-native/
+build-package/
 cmake-*/
 docs/doxyconfig*
 output/
+artifacts/
 
 # Build logs
 build.log

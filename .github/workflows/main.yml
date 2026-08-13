@@ -15,6 +15,11 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      build-version:
+        description: '用于产物文件名的版本标识；留空时使用手动构建时间'
+        required: false
+        type: string
 
 concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
@@ -54,14 +59,21 @@ jobs:
       - name: Setup Release (Manual)
         id: setup_release_manual
         if: github.event_name == 'workflow_dispatch'
+        env:
+          REQUESTED_VERSION: ${{ inputs['build-version'] }}
         run: |
           SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
+          if [ -n "$REQUESTED_VERSION" ]; then
+            VERSION="$REQUESTED_VERSION"
+          else
+            VERSION="manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}"
+          fi
           echo "publish_release=false" >> $GITHUB_OUTPUT
           echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
           echo "release_commit=${{ github.sha }}" >> $GITHUB_OUTPUT
           echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
-          echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
+          echo "release_tag=$VERSION" >> $GITHUB_OUTPUT
+          echo "release_version=$VERSION" >> $GITHUB_OUTPUT
 
   vdd_smoke:
     name: VDD helper smoke tests
@@ -219,8 +231,8 @@ jobs:
             -DSUNSHINE_ASSETS_DIR=assets \
             -DDRIVER_DEPS_REQUIRED=${DRIVER_DEPS_REQUIRED} \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
-            -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/AlkaidLab/foundation-sunshine' \
-            -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/AlkaidLab/foundation-sunshine/issues'
+            -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/${{ github.repository }}' \
+            -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/${{ github.repository }}/issues'
           ninja -C build
 
           # Printed so a run that suddenly gets slow can be diagnosed as a cache
