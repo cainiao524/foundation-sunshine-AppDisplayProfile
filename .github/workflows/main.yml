@@ -185,7 +185,7 @@ jobs:
           npm run build
 
       - name: Cache compiler objects
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ${{ github.workspace }}\.ccache
           # The key must be unique per run for the cache to be written at all,
@@ -239,6 +239,13 @@ jobs:
           # miss rather than guessed at.
           ccache --show-stats
 
+      - name: Save compiler objects
+        if: success()
+        uses: actions/cache/save@v4
+        with:
+          path: ${{ github.workspace }}\.ccache
+          key: ccache-windows-${{ github.run_id }}
+
       - name: Run native tests
         shell: msys2 {0}
         run: ctest --test-dir build --output-on-failure
@@ -248,20 +255,25 @@ jobs:
         uses: actions/cache@v4
         with:
           path: C:\Program Files (x86)\Inno Setup 6
-          key: inno-setup-6
+          key: inno-setup-6.7.3
 
       - name: Install Inno Setup
         if: steps.inno-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
           # Download and install Inno Setup 6 (silent install)
-          $url = "https://jrsoftware.org/download.php/is.exe"
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+          $expectedSha256 = '9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732'
           $installer = "$env:TEMP\innosetup.exe"
           $installed = $false
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
               Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
               Invoke-WebRequest -Uri $url -OutFile $installer -MaximumRetryCount 3 -RetryIntervalSec 5
+              $actualSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($actualSha256 -ne $expectedSha256) {
+                throw "Inno Setup SHA-256 mismatch: $actualSha256"
+              }
               $bytes = [System.IO.File]::ReadAllBytes($installer)
               if ($bytes.Length -lt 1MB -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
                 throw 'Downloaded Inno Setup installer is not a valid Windows executable.'
