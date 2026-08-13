@@ -550,6 +550,7 @@ namespace stream {
     std::string client_cert_uuid;
     bool use_vdd {false};
     int custom_screen_mode {-1};
+    bool restore_display_on_disconnect {false};
     bool highly_suspected_unknown_client {false};
     std::string app_name;
     int app_id = 0;
@@ -1744,6 +1745,7 @@ namespace stream {
       // 注意：必须按照结构体声明顺序初始化字段
       rtsp_stream::launch_session_t temp_launch_session {};
       temp_launch_session.id = session->launch_session_id;
+      temp_launch_session.appid = session->app_id;
       temp_launch_session.client_cert_uuid = session->client_cert_uuid;
       temp_launch_session.client_name = session->client_name;
       temp_launch_session.width = new_width;
@@ -1796,6 +1798,8 @@ namespace stream {
                         << " -> " << new_width << "x" << new_height;
       }
       
+      proc::proc.apply_app_display_profile(session->app_id, temp_launch_session);
+
       if (active_display_resolved) {
         const bool display_reconfigured = stream::session::run_display_reconfiguration_if_single_video_session([&]() {
           const auto result = display_device::session_t::get().configure_display(config::video, temp_launch_session, true);
@@ -3805,8 +3809,7 @@ namespace stream {
             system_tray::update_tray_pausing(proc::proc.get_last_run_app_name());
 #endif
 
-            // TODO: make this configurable per app
-            restore_display_state = false;
+            restore_display_state = session.restore_display_on_disconnect;
           }
           else {
             tray_state::set_idle(proc::proc.get_last_run_app_name());
@@ -4020,6 +4023,7 @@ namespace stream {
       session->client_cert_uuid = launch_session.client_cert_uuid;
       session->use_vdd = launch_session.use_vdd;
       session->custom_screen_mode = launch_session.custom_screen_mode;
+      session->restore_display_on_disconnect = launch_session.restore_display_on_disconnect;
       session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;
       session->app_id = launch_session.appid;
       session->app_name = proc::proc.get_app_name(launch_session.appid);

@@ -17,6 +17,7 @@
 #include <mutex>
 #include <stdexcept>
 #include <random>
+#include <regex>
 #include <map>
 #include <set>
 #include <sstream>
@@ -836,8 +837,64 @@ namespace confighttp {
         return true;
       };
 
+      const auto normalize_display_profile = [&](pt::ptree &app_node) {
+        const auto target = app_node.get_optional<std::string>("display-target");
+        if (!target || target->empty()) {
+          for (const auto *key : {
+                 "display-target", "display-device-prep", "display-resolution-mode", "display-resolution",
+                 "display-refresh-rate-mode", "display-refresh-rate", "display-vdd-identity",
+                 "display-output-name", "display-disconnect-action"}) {
+            app_node.erase(key);
+          }
+          return true;
+        }
+        if (*target != "virtual"sv && *target != "physical"sv) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "Invalid per-app display target");
+          return false;
+        }
+
+        const auto one_of = [](const std::string &value, std::initializer_list<std::string_view> values) {
+          return std::find(values.begin(), values.end(), value) != values.end();
+        };
+        const auto prep = app_node.get<std::string>("display-device-prep", "ensure_active");
+        if (!one_of(prep, {"ensure_active"sv, "ensure_primary"sv, "ensure_secondary"sv, "ensure_only_display"sv})) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "Invalid per-app display layout");
+          return false;
+        }
+
+        const auto resolution_mode = app_node.get<std::string>("display-resolution-mode", "");
+        const auto refresh_mode = app_node.get<std::string>("display-refresh-rate-mode", "");
+        const auto identity = app_node.get<std::string>("display-vdd-identity", "");
+        const auto disconnect = app_node.get<std::string>("display-disconnect-action", "keep");
+        if ((!resolution_mode.empty() && !one_of(resolution_mode, {"client"sv, "fixed"sv})) ||
+            (!refresh_mode.empty() && !one_of(refresh_mode, {"client"sv, "fixed"sv})) ||
+            (!identity.empty() && !one_of(identity, {"app"sv, "app-client"sv})) ||
+            !one_of(disconnect, {"keep"sv, "restore"sv})) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "Invalid per-app display profile option");
+          return false;
+        }
+
+        const auto resolution = app_node.get<std::string>("display-resolution", "");
+        const auto refresh_rate = app_node.get<std::string>("display-refresh-rate", "");
+        if ((resolution_mode == "fixed"sv && !std::regex_match(resolution, std::regex {R"(^[1-9][0-9]{1,4}x[1-9][0-9]{1,4}$)"})) ||
+            (refresh_mode == "fixed"sv && !std::regex_match(refresh_rate, std::regex {R"(^[1-9][0-9]{0,3}(?:\.[0-9]+)?$)"}))) {
+          outputTree.put("status", "false");
+          outputTree.put("error", "Invalid fixed display mode value");
+          return false;
+        }
+
+        if (resolution_mode != "fixed"sv) app_node.erase("display-resolution");
+        if (refresh_mode != "fixed"sv) app_node.erase("display-refresh-rate");
+        if (*target != "virtual"sv) app_node.erase("display-vdd-identity");
+        if (*target != "physical"sv) app_node.erase("display-output-name");
+        return true;
+      };
+
       for (auto &[_, app_node] : input_apps_node) {
-        if (!normalize_gamepad(app_node)) {
+        if (!normalize_gamepad(app_node) || !normalize_display_profile(app_node)) {
           return;
         }
       }
@@ -867,7 +924,7 @@ namespace confighttp {
           input_edit_node.erase("detached");
         }
 
-        if (!normalize_gamepad(input_edit_node)) {
+        if (!normalize_gamepad(input_edit_node) || !normalize_display_profile(input_edit_node)) {
           return;
         }
 

@@ -71,6 +71,15 @@ namespace proc {
     bool wait_all;
     int mouse_mode;  ///< 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
     int gamepad_mode;  ///< 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4
+    int display_target {-1};  ///< -1=inherit, 0=physical, 1=virtual
+    int display_device_prep {-1};
+    int display_resolution_mode {-1};  ///< -1=inherit, 1=client, 2=fixed
+    int display_refresh_rate_mode {-1};  ///< -1=inherit, 1=client, 2=fixed
+    std::string display_resolution;
+    std::string display_refresh_rate;
+    std::string display_output_name;
+    int vdd_identity_mode {0};  ///< 0=global, 1=shared by app, 2=app and client
+    bool restore_display_on_disconnect {false};
     std::chrono::seconds exit_timeout;
   };
 
@@ -108,6 +117,8 @@ namespace proc {
     get_app_name(int app_id);
     std::string
     get_app_cmd(int app_id);
+    bool
+    apply_app_display_profile(int app_id, rtsp_stream::launch_session_t &launch_session) const;
     std::string
     get_last_run_app_name();
     const boost::process::v1::environment &

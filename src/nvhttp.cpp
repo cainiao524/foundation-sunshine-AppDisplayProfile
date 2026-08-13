@@ -629,6 +629,8 @@ namespace nvhttp {
                          << ", rule_source=" << fingerprint_match.source << ']';
     }
 
+    proc::proc.apply_app_display_profile(appid, *launch_session);
+
     if (rtsp_stream::session_count() == 0) {
       // We want to prepare display only if there are no active sessions at
       // the moment. This should to be done before probing encoders as it could
@@ -795,6 +797,8 @@ namespace nvhttp {
                          << ", rule_revision=" << fingerprint_match.revision
                          << ", rule_source=" << fingerprint_match.source << ']';
     }
+
+    proc::proc.apply_app_display_profile(current_appid, *launch_session);
 
     if (no_active_sessions) {
       // Prepare before publishing the ticket so the handshake expiration

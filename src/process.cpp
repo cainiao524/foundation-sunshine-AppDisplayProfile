@@ -494,6 +494,59 @@ namespace proc {
     return iter == _apps.end() ? std::string() : iter->cmd;
   }
 
+  bool
+  proc_t::apply_app_display_profile(int app_id, rtsp_stream::launch_session_t &launch_session) const {
+    const auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto &app) {
+      return app.id == std::to_string(app_id);
+    });
+    if (iter == _apps.end()) {
+      return false;
+    }
+
+    const auto &app = *iter;
+    launch_session.appid = app_id;
+    launch_session.env["SUNSHINE_APP_ID"] = std::to_string(app_id);
+    launch_session.env["SUNSHINE_APP_NAME"] = app.name;
+    if (app.display_target < 0) {
+      return true;
+    }
+
+    launch_session.display_target_override = app.display_target;
+    launch_session.use_vdd = app.display_target == 1;
+    if (app.display_device_prep >= 0) {
+      launch_session.custom_screen_mode = app.display_device_prep;
+    }
+    if (app.display_resolution_mode >= 0) {
+      launch_session.resolution_change_override = app.display_resolution_mode;
+      launch_session.manual_resolution_override = app.display_resolution;
+    }
+    if (app.display_refresh_rate_mode >= 0) {
+      launch_session.refresh_rate_change_override = app.display_refresh_rate_mode;
+      launch_session.manual_refresh_rate_override = app.display_refresh_rate;
+    }
+    launch_session.vdd_identity_mode = app.vdd_identity_mode;
+    launch_session.restore_display_on_disconnect = app.restore_display_on_disconnect;
+
+    if (app.display_target == 0) {
+      if (!app.display_output_name.empty()) {
+        launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = app.display_output_name;
+      }
+      else {
+        launch_session.env.erase("SUNSHINE_CLIENT_DISPLAY_NAME");
+      }
+    }
+    else {
+      launch_session.env.erase("SUNSHINE_CLIENT_DISPLAY_NAME");
+    }
+
+    launch_session.env["SUNSHINE_CLIENT_USE_VDD"] = launch_session.use_vdd ? "true" : "false";
+    launch_session.env["SUNSHINE_CLIENT_CUSTOM_SCREEN_MODE"] = std::to_string(launch_session.custom_screen_mode);
+    BOOST_LOG(info) << "Applied app display profile [app=" << app.name
+                    << ", target=" << app.display_target
+                    << ", prep=" << launch_session.custom_screen_mode << ']';
+    return true;
+  }
+
   std::string
   proc_t::get_last_run_app_name() {
     return _app.name;
@@ -831,6 +884,15 @@ namespace proc {
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
         auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
         auto gamepad = app_node.get_optional<std::string>("gamepad"s);
+        auto display_target = app_node.get_optional<std::string>("display-target"s);
+        auto display_device_prep = app_node.get_optional<std::string>("display-device-prep"s);
+        auto display_resolution_mode = app_node.get_optional<std::string>("display-resolution-mode"s);
+        auto display_resolution = app_node.get_optional<std::string>("display-resolution"s);
+        auto display_refresh_rate_mode = app_node.get_optional<std::string>("display-refresh-rate-mode"s);
+        auto display_refresh_rate = app_node.get_optional<std::string>("display-refresh-rate"s);
+        auto vdd_identity = app_node.get_optional<std::string>("display-vdd-identity"s);
+        auto disconnect_action = app_node.get_optional<std::string>("display-disconnect-action"s);
+        auto display_output_name = app_node.get_optional<std::string>("display-output-name"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -912,6 +974,37 @@ namespace proc {
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);
+        if (display_target && *display_target == "physical"sv) {
+          ctx.display_target = 0;
+        }
+        else if (display_target && *display_target == "virtual"sv) {
+          ctx.display_target = 1;
+        }
+        if (display_device_prep && !display_device_prep->empty()) {
+          ctx.display_device_prep = display_device::parsed_config_t::device_prep_from_view(*display_device_prep);
+        }
+        if (display_resolution_mode && *display_resolution_mode == "client"sv) {
+          ctx.display_resolution_mode = static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic);
+        }
+        else if (display_resolution_mode && *display_resolution_mode == "fixed"sv) {
+          ctx.display_resolution_mode = static_cast<int>(display_device::parsed_config_t::resolution_change_e::manual);
+          ctx.display_resolution = display_resolution.value_or("");
+        }
+        if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
+          ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::automatic);
+        }
+        else if (display_refresh_rate_mode && *display_refresh_rate_mode == "fixed"sv) {
+          ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::manual);
+          ctx.display_refresh_rate = display_refresh_rate.value_or("");
+        }
+        if (vdd_identity && *vdd_identity == "app"sv) {
+          ctx.vdd_identity_mode = 1;
+        }
+        else if (vdd_identity && *vdd_identity == "app-client"sv) {
+          ctx.vdd_identity_mode = 2;
+        }
+        ctx.restore_display_on_disconnect = disconnect_action && *disconnect_action == "restore"sv;
+        ctx.display_output_name = display_output_name.value_or("");
         if (!gamepad || gamepad->empty()) {
           ctx.gamepad_mode = 0;
         }

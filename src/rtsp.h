@@ -52,6 +52,13 @@ namespace rtsp_stream {
     bool enable_mic { false };
     bool use_vdd;
     int custom_screen_mode;
+    int display_target_override {-1};  ///< -1=inherit, 0=physical, 1=virtual
+    int resolution_change_override {-1};
+    int refresh_rate_change_override {-1};
+    std::string manual_resolution_override;
+    std::string manual_refresh_rate_override;
+    int vdd_identity_mode {0};  ///< 0=global, 1=shared by app, 2=app and client
+    bool restore_display_on_disconnect {false};
     float max_nits;
     float min_nits;
     float max_full_nits;

@@ -178,7 +178,8 @@ namespace display_device {
      */
     bool
     parse_resolution_option(const config::video_t &config, const rtsp_stream::launch_session_t &session, parsed_config_t &parsed_config) {
-      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(config.resolution_change) };
+      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(
+        session.resolution_change_override >= 0 ? session.resolution_change_override : config.resolution_change) };
       switch (resolution_option) {
         case parsed_config_t::resolution_change_e::automatic: {
           if (!session.enable_sops) {
@@ -207,7 +208,8 @@ namespace display_device {
             parsed_config.resolution = boost::none;
           }
           else {
-            if (!parse_resolution_string(config.manual_resolution, parsed_config.resolution)) {
+            const auto &manual_resolution = session.manual_resolution_override.empty() ? config.manual_resolution : session.manual_resolution_override;
+            if (!parse_resolution_string(manual_resolution, parsed_config.resolution)) {
               BOOST_LOG(error) << "Failed to parse manual resolution string!";
               return false;
             }
@@ -245,7 +247,8 @@ namespace display_device {
      */
     bool
     parse_refresh_rate_option(const config::video_t &config, const rtsp_stream::launch_session_t &session, parsed_config_t &parsed_config) {
-      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(config.refresh_rate_change) };
+      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(
+        session.refresh_rate_change_override >= 0 ? session.refresh_rate_change_override : config.refresh_rate_change) };
       switch (refresh_rate_option) {
         case parsed_config_t::refresh_rate_change_e::automatic: {
           if (session.fps >= 0) {
@@ -258,7 +261,8 @@ namespace display_device {
           break;
         }
         case parsed_config_t::refresh_rate_change_e::manual: {
-          if (!parse_refresh_rate_string(config.manual_refresh_rate, parsed_config.refresh_rate)) {
+          const auto &manual_refresh_rate = session.manual_refresh_rate_override.empty() ? config.manual_refresh_rate : session.manual_refresh_rate_override;
+          if (!parse_refresh_rate_string(manual_refresh_rate, parsed_config.refresh_rate)) {
             BOOST_LOG(error) << "Failed to parse manual refresh rate string!";
             return false;
           }
@@ -298,8 +302,10 @@ namespace display_device {
       constexpr auto resolution_only_remapping { "resolution_only" };
       constexpr auto refresh_rate_only_remapping { "refresh_rate_only" };
 
-      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(config.resolution_change) };
-      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(config.refresh_rate_change) };
+      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(
+        session.resolution_change_override >= 0 ? session.resolution_change_override : config.resolution_change) };
+      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(
+        session.refresh_rate_change_override >= 0 ? session.refresh_rate_change_override : config.refresh_rate_change) };
 
       // Copy only the remapping values that we can actually use with our configuration options
       std::vector<config::video_t::display_mode_remapping_t> remapping_values;
@@ -538,6 +544,11 @@ namespace display_device {
   resolve_display_intent(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
     // The client may pick a display for its own stream; otherwise the host config decides.
     std::string device_id = config.output_name;
+#ifdef _WIN32
+    if (session.display_target_override == 0 && device_id == VDD_NAME) {
+      device_id.clear();
+    }
+#endif
     bool client_named_it = false;
     if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
       if (std::string client_display_name = it->to_string(); !client_display_name.empty()) {
@@ -555,10 +566,10 @@ namespace display_device {
     };
 
     // An explicit VDD request does not depend on CCD being available.
-    bool explicit_vdd = session.use_vdd;
+    bool explicit_vdd = session.display_target_override == 1 || session.use_vdd;
 #ifdef _WIN32
     // VDD_NAME is the stable alias exposed by the Windows host configuration UI.
-    explicit_vdd = explicit_vdd || intent.device_id == VDD_NAME;
+    explicit_vdd = explicit_vdd || (session.display_target_override != 0 && intent.device_id == VDD_NAME);
 #endif
     if (explicit_vdd) {
       intent.target = display_intent_t::target_e::vdd;

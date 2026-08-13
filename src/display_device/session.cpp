@@ -205,23 +205,46 @@ namespace display_device {
      */
     std::string
     get_client_id_from_session(const rtsp_stream::launch_session_t &session) {
+      const auto decorate_for_app = [&](std::string client_id) {
+        std::string app_identity = std::to_string(session.appid);
+        if (auto app_id_it = session.env.find("SUNSHINE_APP_ID"); app_id_it != session.env.end()) {
+          if (std::string configured_app_id = app_id_it->to_string(); !configured_app_id.empty()) {
+            app_identity = std::move(configured_app_id);
+          }
+        }
+        if (session.vdd_identity_mode == 1) {
+          return std::string {"app:"} + app_identity;
+        }
+        if (session.vdd_identity_mode == 2) {
+          return std::string {"app:"} + app_identity + ":client:" + client_id;
+        }
+        return client_id;
+      };
       if (!session.client_cert_uuid.empty()) {
-        return session.client_cert_uuid;
+        return decorate_for_app(session.client_cert_uuid);
       }
 
       // 兼容尚未通过独立字段传递 client_cert_uuid、只写入启动环境的内部调用方。
       if (auto cert_uuid_it = session.env.find("SUNSHINE_CLIENT_CERT_UUID");
         cert_uuid_it != session.env.end()) {
         if (std::string cert_uuid = cert_uuid_it->to_string(); !cert_uuid.empty()) {
-          return cert_uuid;
+          return decorate_for_app(cert_uuid);
         }
       }
 
       if (!session.client_name.empty() && session.client_name != "unknown") {
-        return session.client_name;
+        return decorate_for_app(session.client_name);
       }
 
       return {};
+    }
+
+    std::string
+    get_vdd_identifier(const rtsp_stream::launch_session_t &session, const std::string &client_id) {
+      if (session.vdd_identity_mode != 0) {
+        return client_id;
+      }
+      return config::video.vdd_reuse ? "shared_vdd" : client_id;
     }
 
     /**
@@ -278,15 +301,11 @@ namespace display_device {
      * @return true if recovery succeeded, false otherwise.
      */
     bool
-    try_recover_vdd_device(const std::string &client_id, const std::string &client_name, const vdd_utils::hdr_brightness_t &hdr_brightness, std::string &device_zako) {
+    try_recover_vdd_device(const std::string &vdd_identifier, const std::string &client_name, const vdd_utils::hdr_brightness_t &hdr_brightness, std::string &device_zako) {
       constexpr int max_retries = 3;
       const vdd_utils::physical_size_t physical_size = vdd_utils::get_client_physical_size(client_name);
 
       // 复用模式使用固定标识符，否则使用客户端ID
-      const std::string vdd_identifier = config::video.vdd_reuse
-        ? "shared_vdd"
-        : client_id;
-
       for (int retry = 1; retry <= max_retries; ++retry) {
         BOOST_LOG(info) << "正在执行第" << retry << "次VDD恢复尝试...";
 
@@ -765,7 +784,7 @@ namespace display_device {
 
       BOOST_LOG(info) << "创建虚拟显示器...";
       // 共享模式使用固定标识符；独立模式则使用当前客户端标识符创建显示器。
-      const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : current_client_id;
+      const std::string vdd_identifier = get_vdd_identifier(session, current_client_id);
       if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
         BOOST_LOG(error) << "VDD monitor creation command failed";
         return vdd_stage_result_e::create_failed;
@@ -784,7 +803,7 @@ namespace display_device {
       vdd_utils::destroy_vdd_monitor();
       std::this_thread::sleep_for(500ms);
 
-      if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {
+      if (!try_recover_vdd_device(get_vdd_identifier(session, current_client_id), session.client_name, hdr_brightness, device_zako)) {
         BOOST_LOG(error) << "VDD设备最终初始化失败";
 
         // last-resort：只有 IOCTL 通路彻底死掉才动 adapter，因为
