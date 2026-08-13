@@ -144,6 +144,164 @@
                 </FormField>
               </AccordionItem>
 
+              <AccordionItem
+                v-if="isWindows"
+                id="displayProfile"
+                icon="fa-display"
+                :title="t('apps.display_profile_title')"
+                parent-id="appFormAccordion"
+              >
+                <FormField
+                  id="displayTarget"
+                  :label="t('apps.display_profile_policy')"
+                  :hint="t('apps.display_profile_policy_desc')"
+                >
+                  <select
+                    id="displayTarget"
+                    class="form-select form-control-enhanced"
+                    v-model="formData['display-target']"
+                  >
+                    <option value="">{{ t('apps.display_profile_inherit') }}</option>
+                    <option value="virtual">{{ t('apps.display_profile_virtual') }}</option>
+                    <option value="physical">{{ t('apps.display_profile_physical') }}</option>
+                  </select>
+                </FormField>
+
+                <template v-if="hasForcedDisplayProfile">
+                  <div v-if="formData['display-target'] === 'virtual' && formData['display-device-prep'] === 'ensure_only_display'" class="alert alert-warning display-profile-alert" role="alert">
+                    <i class="fas fa-triangle-exclamation me-2"></i>
+                    {{ t('apps.display_profile_exclusive_warning') }}
+                  </div>
+
+                  <FormField
+                    v-if="formData['display-target'] === 'physical'"
+                    id="displayOutputName"
+                    :label="t('apps.display_profile_output_name')"
+                    :hint="t('apps.display_profile_output_name_desc')"
+                  >
+                    <input
+                      id="displayOutputName"
+                      class="form-control form-control-enhanced monospace"
+                      v-model.trim="formData['display-output-name']"
+                      :placeholder="t('apps.display_profile_output_name_placeholder')"
+                    />
+                  </FormField>
+
+                  <FormField
+                    id="displayDevicePrep"
+                    :label="t('apps.display_profile_layout')"
+                    :hint="t('apps.display_profile_layout_desc')"
+                  >
+                    <select
+                      id="displayDevicePrep"
+                      class="form-select form-control-enhanced"
+                      v-model="formData['display-device-prep']"
+                    >
+                      <option value="ensure_active">{{ t('apps.display_profile_active') }}</option>
+                      <option value="ensure_primary">{{ t('apps.display_profile_primary') }}</option>
+                      <option value="ensure_secondary">{{ t('apps.display_profile_secondary') }}</option>
+                      <option value="ensure_only_display">{{ t('apps.display_profile_exclusive') }}</option>
+                    </select>
+                  </FormField>
+
+                  <FormField
+                    v-if="formData['display-target'] === 'virtual'"
+                    id="displayVddIdentity"
+                    :label="t('apps.display_profile_identity')"
+                    :hint="t('apps.display_profile_identity_desc')"
+                  >
+                    <select
+                      id="displayVddIdentity"
+                      class="form-select form-control-enhanced"
+                      v-model="formData['display-vdd-identity']"
+                    >
+                      <option value="">{{ t('apps.display_profile_identity_global') }}</option>
+                      <option value="app-client">{{ t('apps.display_profile_identity_app_client') }}</option>
+                      <option value="app">{{ t('apps.display_profile_identity_app') }}</option>
+                    </select>
+                  </FormField>
+
+                  <div class="display-profile-grid">
+                    <FormField
+                      id="displayResolutionMode"
+                      :label="t('apps.display_profile_resolution')"
+                      :hint="t('apps.display_profile_resolution_desc')"
+                    >
+                      <select
+                        id="displayResolutionMode"
+                        class="form-select form-control-enhanced"
+                        v-model="formData['display-resolution-mode']"
+                      >
+                        <option value="">{{ t('apps.display_profile_inherit') }}</option>
+                        <option value="client">{{ t('apps.display_profile_follow_client') }}</option>
+                        <option value="fixed">{{ t('apps.display_profile_fixed') }}</option>
+                      </select>
+                    </FormField>
+
+                    <FormField
+                      id="displayRefreshRateMode"
+                      :label="t('apps.display_profile_refresh_rate')"
+                      :hint="t('apps.display_profile_refresh_rate_desc')"
+                    >
+                      <select
+                        id="displayRefreshRateMode"
+                        class="form-select form-control-enhanced"
+                        v-model="formData['display-refresh-rate-mode']"
+                      >
+                        <option value="">{{ t('apps.display_profile_inherit') }}</option>
+                        <option value="client">{{ t('apps.display_profile_follow_client') }}</option>
+                        <option value="fixed">{{ t('apps.display_profile_fixed') }}</option>
+                      </select>
+                    </FormField>
+                  </div>
+
+                  <div class="display-profile-grid">
+                    <FormField
+                      v-if="formData['display-resolution-mode'] === 'fixed'"
+                      id="displayResolution"
+                      :label="t('apps.display_profile_fixed_resolution')"
+                      :hint="t('apps.display_profile_fixed_resolution_desc')"
+                    >
+                      <input
+                        id="displayResolution"
+                        class="form-control form-control-enhanced monospace"
+                        v-model.trim="formData['display-resolution']"
+                        placeholder="1920x1080"
+                      />
+                    </FormField>
+
+                    <FormField
+                      v-if="formData['display-refresh-rate-mode'] === 'fixed'"
+                      id="displayRefreshRate"
+                      :label="t('apps.display_profile_fixed_refresh_rate')"
+                      :hint="t('apps.display_profile_fixed_refresh_rate_desc')"
+                    >
+                      <input
+                        id="displayRefreshRate"
+                        class="form-control form-control-enhanced monospace"
+                        v-model.trim="formData['display-refresh-rate']"
+                        placeholder="60"
+                      />
+                    </FormField>
+                  </div>
+
+                  <FormField
+                    id="displayDisconnectAction"
+                    :label="t('apps.display_profile_disconnect')"
+                    :hint="t('apps.display_profile_disconnect_desc')"
+                  >
+                    <select
+                      id="displayDisconnectAction"
+                      class="form-select form-control-enhanced"
+                      v-model="formData['display-disconnect-action']"
+                    >
+                      <option value="keep">{{ t('apps.display_profile_disconnect_keep') }}</option>
+                      <option value="restore">{{ t('apps.display_profile_disconnect_restore') }}</option>
+                    </select>
+                  </FormField>
+                </template>
+              </AccordionItem>
+
               <AccordionItem id="commands" icon="fa-terminal" :title="t('apps.command_settings')" parent-id="appFormAccordion">
                 <div class="form-group-enhanced">
                   <div class="form-check form-switch">
@@ -346,6 +504,15 @@ const DEFAULT_FORM_DATA = Object.freeze({
   detached: [],
   'image-path': '',
   'working-dir': '',
+  'display-target': '',
+  'display-device-prep': 'ensure_active',
+  'display-resolution-mode': '',
+  'display-resolution': '',
+  'display-refresh-rate-mode': '',
+  'display-refresh-rate': '',
+  'display-vdd-identity': 'app-client',
+  'display-output-name': '',
+  'display-disconnect-action': 'keep',
 })
 
 const FIELD_VALIDATION_MAP = Object.freeze({
@@ -377,7 +544,14 @@ const modalInstance = ref(null)
 const fileSelector = ref(null)
 
 const isWindows = computed(() => props.platform === 'windows')
+const hasForcedDisplayProfile = computed(() => Boolean(formData.value?.['display-target']))
 const isNewApp = computed(() => !props.app || props.app.index === -1)
+const displayProfileValid = computed(() => {
+  if (!formData.value?.['display-target']) return true
+  if (formData.value['display-resolution-mode'] === 'fixed' && !/^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(formData.value['display-resolution'] || '')) return false
+  if (formData.value['display-refresh-rate-mode'] === 'fixed' && !/^[1-9]\d{0,3}(?:\.\d+)?$/.test(formData.value['display-refresh-rate'] || '')) return false
+  return true
+})
 const isFormValid = computed(() => {
   // name 字段是必填的，必须验证通过
   const nameValid = validation.value.name?.isValid === true
@@ -385,7 +559,7 @@ const isFormValid = computed(() => {
   // cmd 字段不是必填的，如果已验证则使用验证结果，如果未验证或为空则认为有效
   const cmdValid = validation.value.cmd?.isValid !== false  // undefined 或 true 都认为有效
   
-  return nameValid && cmdValid
+  return nameValid && cmdValid && displayProfileValid.value
 })
 
 const showMessage = (message, type = 'info') => {
@@ -636,6 +810,23 @@ const saveApp = async () => {
   }
 
   const editedApp = { ...formData.value }
+  if (!editedApp['display-target']) {
+    ;[
+      'display-target',
+      'display-device-prep',
+      'display-resolution-mode',
+      'display-resolution',
+      'display-refresh-rate-mode',
+      'display-refresh-rate',
+      'display-vdd-identity',
+      'display-output-name',
+      'display-disconnect-action',
+    ].forEach((key) => delete editedApp[key])
+  }
+  if (editedApp['display-resolution-mode'] !== 'fixed') delete editedApp['display-resolution']
+  if (editedApp['display-refresh-rate-mode'] !== 'fixed') delete editedApp['display-refresh-rate']
+  if (editedApp['display-target'] !== 'virtual') delete editedApp['display-vdd-identity']
+  if (editedApp['display-target'] !== 'physical') delete editedApp['display-output-name']
   if (editedApp['image-path']) {
     editedApp['image-path'] = editedApp['image-path'].toString().replace(/"/g, '')
   }
@@ -715,6 +906,25 @@ onBeforeUnmount(cleanup)
 
 .monospace {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+}
+
+.display-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 1rem;
+}
+
+.display-profile-alert {
+  border-color: color-mix(in srgb, var(--bs-warning) 45%, var(--ui-border));
+  background: color-mix(in srgb, var(--bs-warning) 12%, var(--ui-surface));
+  color: var(--ui-text);
+}
+
+@media (max-width: 767.98px) {
+  .display-profile-grid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0;
+  }
 }
 
 .cmd-examples {
