@@ -18,6 +18,9 @@
 
 ---
 
+> [!IMPORTANT]
+> 本仓库包含个人 Fork 的“按应用显示方案”和“只同步上游正式版”定制。继续开发、同步或发布前，请先阅读 [本 Fork 项目交接与开发指南](docs/downstream/project-handoff.md)；底层字段和调用顺序见 [APP 显示方案维护说明](docs/downstream/app-display-profile.md)。
+
 ### ░▒▓ 核心特性
 
 - **HDR 全链路** — 双格式编码 (PQ + HLG)・逐帧 GPU 亮度分析・HDR10+ / HDR Vivid 动态元数据・完整静态元数据透传
