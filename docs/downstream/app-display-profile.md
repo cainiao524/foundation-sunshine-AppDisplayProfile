@@ -17,12 +17,11 @@
 | 字段 | 值 | 说明 |
 | --- | --- | --- |
 | `display-target` | 空、`virtual`、`physical`、`physical-current` | 跟随全局、强制虚拟屏、强制物理屏、原样串流当前物理屏 |
-| `display-device-prep` | `ensure_active`、`ensure_primary`、`ensure_secondary`、`ensure_only_display` | 直接对应基地版现有显示准备枚举 |
+| `display-device-prep` | `no_operation`、`ensure_active`、`ensure_primary`、`ensure_secondary`、`ensure_only_display` | 直接对应基地版现有显示准备枚举 |
 | `display-resolution-mode` | 空、`client`、`fixed` | 跟随全局、跟随当前客户端、固定值 |
 | `display-resolution` | 例如 `1920x1080` | 固定分辨率 |
 | `display-refresh-rate-mode` | 空、`client`、`fixed` | 跟随全局、跟随当前客户端、固定值 |
 | `display-refresh-rate` | 例如 `60` | 固定刷新率 |
-| `display-vdd-identity` | 空、`app`、`app-client` | 跟随全局、APP 共用、APP 与客户端分别独立 |
 | `display-output-name` | 显示设备编号 | 强制物理屏或原样串流物理屏时可选 |
 | `display-disconnect-action` | `keep`、`restore` | 断开后保留等待恢复，或立即恢复物理拓扑 |
 
@@ -36,7 +35,7 @@
 - RTSP `ANNOUNCE` 时重新读取一次当前模式，用它覆盖客户端宽度、高度和帧率，并锁定精确捕获目标。
 - 全局捕获后端为 `vdd` 时，本会话改用 `ddx` 捕获物理屏；不会创建、启用或复用 VDD。
 - 忽略串流中的客户端动态分辨率和帧率变更；不执行断开恢复或取消恢复。
-- 保存配置时清除布局、分辨率、刷新率、VDD 身份和断开恢复字段，只保留目标和可选物理屏编号。
+- 保存配置时清除布局、分辨率、刷新率和断开恢复字段，只保留目标和可选物理屏编号。
 
 ## Foundation Desktop 入口
 
@@ -44,7 +43,7 @@
 
 - 自动适配基地版 Moonlight。这是默认值，不保存 `display-target`，因此基地版客户端的 `useVdd`、`customScreenMode`、`customVddScreenMode` 和显示器名称等本次连接参数仍然有效；普通 Moonlight 没有扩展参数时继续使用全局设置。
 - 原样串流当前物理屏。
-- 强制物理屏或基地虚拟屏，并可分别调整显示布局、分辨率模式、固定分辨率、刷新率模式、固定刷新率、虚拟屏身份、目标物理屏和断开策略。
+- 强制物理屏或基地虚拟屏，并可分别调整显示布局、分辨率模式、固定分辨率、刷新率模式、固定刷新率、目标物理屏和断开策略。
 - 遇到当前版本不认识的新字段值时保留原始自定义方案，禁止静默降级或覆盖。
 
 这个入口只编辑 `apps.json` 中 `Desktop` APP 的同一组 `display-*` 字段，不另建显示后端。选择“自动适配基地版 Moonlight”时删除这些字段，保持客户端参数和上游全局回退路径。所有强制方案仍由 Sunshine 服务端按 APP 编号应用，因此普通 Moonlight 也可以使用。
@@ -76,11 +75,11 @@ Foundation Moonlight PC 的显示器选择界面目前只修改两套布局偏�
 
 动态分辨率调整也必须重新应用 APP 方案，避免活动显示器探测覆盖强制目标。
 
-## 参考项目
+## 实现边界
 
-- Vibepollo：参考 APP 级虚拟屏模式和布局的数据模型，以及在显示准备前解析 APP 的顺序。
-- Apollo：参考按 APP、按 APP 与客户端生成稳定虚拟屏身份的思路。
-- 本项目不移植它们的显示助手或驱动体系。
+本功能只使用 Foundation Sunshine 已有的显示请求、显示准备、虚拟显示器创建和恢复流程。APP 配置仅在显示准备前覆盖启动会话参数，不包含另一套显示管理实现。
+
+APP 编辑器的显示器组合必须直接复用主设置中的 `DisplayPreparationPicker.vue`，保持五种布局卡片、主题变量和响应式布局一致。
 
 ## 上游同步
 
@@ -90,7 +89,7 @@ Foundation Moonlight PC 的显示器选择界面目前只修改两套布局偏�
 - `src/nvhttp_stream_start.cpp` 的只读物理屏预检是否仍绕过显示配置和全部恢复路径。
 - `src/process.*` 的 APP 字段解析与保存。
 - `src/display_device/parsed_config.cpp` 的显示意图和分辨率解析。
-- `src/display_device/session.cpp` 的虚拟屏身份生成。
+- `src/display_device/session.cpp` 的基地版 VDD 创建、复用和恢复流程。
 - `src/rtsp.cpp`、`src/video.*` 的握手模式覆盖、精确捕获目标和禁止显示回退。
 - `src/stream.cpp` 的最后客户端断开和动态分辨率、帧率路径。
 - `AppEditor.vue` 是否仍使用上游表单组件和主题变量。

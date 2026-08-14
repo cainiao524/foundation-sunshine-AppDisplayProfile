@@ -550,6 +550,7 @@ namespace stream {
     std::string client_cert_uuid;
     bool use_vdd {false};
     int custom_screen_mode {-1};
+    int custom_vdd_screen_mode {-1};
     bool stream_current_physical_mode {false};
     bool restore_display_on_disconnect {false};
     bool highly_suspected_unknown_client {false};
@@ -1762,6 +1763,7 @@ namespace stream {
       temp_launch_session.enable_sops = session->enable_sops;
       temp_launch_session.use_vdd = session->use_vdd;
       temp_launch_session.custom_screen_mode = session->custom_screen_mode;
+      temp_launch_session.custom_vdd_screen_mode = session->custom_vdd_screen_mode;
       temp_launch_session.hdr_capabilities = session->hdr_capabilities;
       temp_launch_session.reported_hdr_capabilities = session->reported_hdr_capabilities;
       temp_launch_session.hdr_target_source = session->hdr_target_source;
@@ -4036,6 +4038,7 @@ namespace stream {
       session->client_cert_uuid = launch_session.client_cert_uuid;
       session->use_vdd = launch_session.use_vdd;
       session->custom_screen_mode = launch_session.custom_screen_mode;
+      session->custom_vdd_screen_mode = launch_session.custom_vdd_screen_mode;
       session->stream_current_physical_mode = launch_session.stream_current_physical_mode;
       session->restore_display_on_disconnect = launch_session.restore_display_on_disconnect;
       session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;

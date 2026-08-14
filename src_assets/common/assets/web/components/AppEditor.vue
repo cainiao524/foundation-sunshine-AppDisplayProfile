@@ -197,40 +197,10 @@
                     />
                   </FormField>
 
-                  <FormField
+                  <DisplayPreparationPicker
                     v-if="formData['display-target'] !== 'physical-current'"
-                    id="displayDevicePrep"
-                    :label="t('apps.display_profile_layout')"
-                    :hint="t('apps.display_profile_layout_desc')"
-                  >
-                    <select
-                      id="displayDevicePrep"
-                      class="form-select form-control-enhanced"
-                      v-model="formData['display-device-prep']"
-                    >
-                      <option value="ensure_active">{{ t('apps.display_profile_active') }}</option>
-                      <option value="ensure_primary">{{ t('apps.display_profile_primary') }}</option>
-                      <option value="ensure_secondary">{{ t('apps.display_profile_secondary') }}</option>
-                      <option value="ensure_only_display">{{ t('apps.display_profile_exclusive') }}</option>
-                    </select>
-                  </FormField>
-
-                  <FormField
-                    v-if="formData['display-target'] === 'virtual'"
-                    id="displayVddIdentity"
-                    :label="t('apps.display_profile_identity')"
-                    :hint="t('apps.display_profile_identity_desc')"
-                  >
-                    <select
-                      id="displayVddIdentity"
-                      class="form-select form-control-enhanced"
-                      v-model="formData['display-vdd-identity']"
-                    >
-                      <option value="">{{ t('apps.display_profile_identity_global') }}</option>
-                      <option value="app-client">{{ t('apps.display_profile_identity_app_client') }}</option>
-                      <option value="app">{{ t('apps.display_profile_identity_app') }}</option>
-                    </select>
-                  </FormField>
+                    v-model="formData['display-device-prep']"
+                  />
 
                   <div v-if="formData['display-target'] !== 'physical-current'" class="display-profile-grid">
                     <FormField
@@ -486,7 +456,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { validateField as validateFieldHelper, validateAppForm } from '../utils/validation.js'
 import { nanoid } from 'nanoid'
@@ -495,9 +465,11 @@ import ImageSelector from './ImageSelector.vue'
 import AccordionItem from './AccordionItem.vue'
 import FormField from './FormField.vue'
 import CheckboxField from './CheckboxField.vue'
+import DisplayPreparationPicker from '../configs/tabs/audiovideo/DisplayPreparationPicker.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 import { deepClone } from '../utils/helpers.js'
+import { normalizeAppDisplayProfile } from '../utils/appDisplayProfile.js'
 
 const DEFAULT_FORM_DATA = Object.freeze({
   name: '',
@@ -522,7 +494,6 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'display-resolution': '',
   'display-refresh-rate-mode': '',
   'display-refresh-rate': '',
-  'display-vdd-identity': 'app-client',
   'display-output-name': '',
   'display-disconnect-action': 'keep',
 })
@@ -541,6 +512,11 @@ const props = defineProps({
   platform: { type: String, default: 'linux' },
   disabled: { type: Boolean, default: false },
 })
+
+provide(
+  'platform',
+  computed(() => props.platform)
+)
 
 const emit = defineEmits(['close', 'save-app'])
 
@@ -822,35 +798,7 @@ const saveApp = async () => {
     return
   }
 
-  const editedApp = { ...formData.value }
-  if (!editedApp['display-target']) {
-    ;[
-      'display-target',
-      'display-device-prep',
-      'display-resolution-mode',
-      'display-resolution',
-      'display-refresh-rate-mode',
-      'display-refresh-rate',
-      'display-vdd-identity',
-      'display-output-name',
-      'display-disconnect-action',
-    ].forEach((key) => delete editedApp[key])
-  }
-  if (editedApp['display-target'] === 'physical-current') {
-    ;[
-      'display-device-prep',
-      'display-resolution-mode',
-      'display-resolution',
-      'display-refresh-rate-mode',
-      'display-refresh-rate',
-      'display-vdd-identity',
-      'display-disconnect-action',
-    ].forEach((key) => delete editedApp[key])
-  }
-  if (editedApp['display-resolution-mode'] !== 'fixed') delete editedApp['display-resolution']
-  if (editedApp['display-refresh-rate-mode'] !== 'fixed') delete editedApp['display-refresh-rate']
-  if (editedApp['display-target'] !== 'virtual') delete editedApp['display-vdd-identity']
-  if (editedApp['display-target'] !== 'physical' && editedApp['display-target'] !== 'physical-current') delete editedApp['display-output-name']
+  const editedApp = normalizeAppDisplayProfile(formData.value)
   if (editedApp['image-path']) {
     editedApp['image-path'] = editedApp['image-path'].toString().replace(/"/g, '')
   }

@@ -100,16 +100,15 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 | 字段 | 可用值 | 含义 |
 | --- | --- | --- |
 | `display-target` | 空、`virtual`、`physical`、`physical-current` | 跟随全局、强制虚拟屏、强制物理屏、原样串流当前物理屏 |
-| `display-device-prep` | `ensure_active`、`ensure_primary`、`ensure_secondary`、`ensure_only_display` | 保证目标启用、设为主屏、设为副屏、仅保留目标显示器 |
+| `display-device-prep` | `no_operation`、`ensure_active`、`ensure_primary`、`ensure_secondary`、`ensure_only_display` | 不操作拓扑、保证目标启用、设为主屏、设为副屏、仅保留目标显示器 |
 | `display-resolution-mode` | 空、`client`、`fixed` | 跟随全局、跟随客户端、固定分辨率 |
 | `display-resolution` | 例如 `1920x1080` | 固定分辨率，仅在 `fixed` 时保存 |
 | `display-refresh-rate-mode` | 空、`client`、`fixed` | 跟随全局、跟随客户端、固定刷新率 |
 | `display-refresh-rate` | 例如 `60`、`120` | 固定刷新率，仅在 `fixed` 时保存 |
-| `display-vdd-identity` | 空、`app`、`app-client` | 跟随全局、每个 APP 共用、每个 APP 与客户端组合独立 |
 | `display-output-name` | 显示设备编号 | 强制物理屏或原样串流物理屏时可选 |
 | `display-disconnect-action` | `keep`、`restore` | 断开后保留当前方案，或恢复原物理显示布局 |
 
-界面默认值以 `AppEditor.vue` 为准。当前新建强制虚拟屏方案默认使用 `app-client` 身份和 `keep` 断开策略。
+界面默认值以 `AppEditor.vue` 为准。当前新建强制方案默认使用 `ensure_active` 布局和 `keep` 断开策略。
 
 ### 4.3 示例
 
@@ -122,7 +121,6 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
   "display-device-prep": "ensure_secondary",
   "display-resolution-mode": "client",
   "display-refresh-rate-mode": "client",
-  "display-vdd-identity": "app-client",
   "display-disconnect-action": "keep"
 }
 ```
@@ -147,7 +145,6 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
   "display-resolution": "1920x1080",
   "display-refresh-rate-mode": "fixed",
   "display-refresh-rate": "60",
-  "display-vdd-identity": "app-client",
   "display-disconnect-action": "restore"
 }
 ```
@@ -163,11 +160,11 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 | `src_assets/common/assets/web/public/assets/locale/*.json` | APP 显示方案界面翻译 |
 | `src/confighttp.cpp` | 保存 APP 时验证枚举、分辨率、刷新率和条件字段 |
 | `src/process.h`、`src/process.cpp` | 解析 APP 字段，并通过 `apply_app_display_profile()` 覆盖启动会话 |
-| `src/rtsp.h` | 在启动会话中携带显示目标、分辨率、刷新率、VDD 身份和恢复策略 |
+| `src/rtsp.h` | 在启动会话中携带显示目标、分辨率、刷新率和恢复策略 |
 | `src/nvhttp.cpp` | APP 启动和恢复时，在显示器准备前应用 APP 方案 |
 | `src/nvhttp_stream_start.cpp` | 原样串流模式只读解析物理屏和当前模式，并绕过显示配置与恢复 |
 | `src/display_device/parsed_config.cpp` | 把 APP 覆盖转换成基地版显示意图和显示请求 |
-| `src/display_device/session.cpp` | 根据全局、APP 或 APP+客户端生成 VDD 身份并复用现有创建流程 |
+| `src/display_device/session.cpp` | 使用基地版原生 VDD 标识、创建、复用和恢复流程 |
 | `src/rtsp.cpp`、`src/video.*` | 在握手时覆盖串流规格，锁定捕获目标并禁止静默换屏 |
 | `src/stream.cpp` | 动态参数时重新应用或保护 APP 方案，并在最后会话断开时执行恢复策略 |
 | `docs/downstream/app-display-profile.md` | 字段和底层维护要点 |
@@ -190,12 +187,13 @@ Foundation Desktop 中的完整编辑器只负责生成同一组 APP 字段，�
 
 动态分辨率请求也必须重新应用当前 APP 方案，否则活动显示器探测可能覆盖强制目标。
 
-### 5.3 VDD 身份
+### 5.3 VDD 标识
 
-- 全局模式：保持基地版 `vdd_reuse` 和客户端身份行为。
-- `app`：同一 APP 共用稳定身份。
-- `app-client`：APP 编号与客户端证书标识组合成稳定身份，适合不同客户端分别维护虚拟屏。
-- 优先使用客户端证书 UUID；名称只作为兼容回退。
+APP 配置只决定是否使用基地虚拟显示器以及显示器组合，不生成任何按应用标识。虚拟显示器创建和恢复继续使用基地版原生规则：
+
+```cpp
+config::video.vdd_reuse ? "shared_vdd" : client_id
+```
 
 不要另写 VDD 驱动或显示助手。现有驱动、创建、恢复、IOCTL 和拓扑逻辑属于基地版，应优先复用。
 
@@ -309,7 +307,6 @@ git diff --check
 - 原样串流当前物理屏的宽度、高度和刷新率覆盖客户端请求，且显示拓扑、模式与 VDD 数量不变。
 - 原样串流指定屏不存在、未启用或指向 VDD 时直接失败，不捕获其他屏幕。
 - 跟随客户端与固定分辨率、刷新率。
-- `app` 和 `app-client` 两种 VDD 身份。
 - 断开保留与断开恢复。
 - APP 正常退出、启动失败和 Sunshine 停止时的显示恢复。
 - 明暗主题、窄窗口和高缩放下 APP 编辑器无横向溢出。
@@ -353,7 +350,7 @@ sunshine-funky9-<上游正式版标签去除中文后缀>
 2. `src/process.*`：APP 结构、JSON 字段解析和 `apply_app_display_profile()`。
 3. `src/rtsp.h`：启动会话字段布局和初始化。
 4. `src/display_device/parsed_config.cpp`：显示意图、客户端显示器和 VDD 回退。
-5. `src/display_device/session.cpp`：VDD 创建、复用、身份和恢复。
+5. `src/display_device/session.cpp`：VDD 创建、复用和恢复。
 6. `src/stream.cpp`：动态分辨率、最后会话断开和显示恢复。
 7. `src_assets/common/assets/web/components/AppEditor.vue`：表单数据、校验、条件字段清理和布局。
 8. `src_assets/common/assets/web/public/assets/locale/*.json`：新键和上游翻译结构。

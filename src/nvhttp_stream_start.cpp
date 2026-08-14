@@ -471,6 +471,7 @@ namespace nvhttp::stream_start {
       recovery_session.enable_mic = launch_session.enable_mic;
       recovery_session.use_vdd = true;
       recovery_session.custom_screen_mode = launch_session.custom_screen_mode;
+      recovery_session.custom_vdd_screen_mode = launch_session.custom_vdd_screen_mode;
       recovery_session.hdr_capabilities = launch_session.hdr_capabilities;
       recovery_session.reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
       recovery_session.hdr_target_source = launch_session.hdr_target_source;

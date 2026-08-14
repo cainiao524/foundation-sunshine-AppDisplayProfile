@@ -185,8 +185,6 @@ namespace proc {
     // Note: Some variables like SUNSHINE_CLIENT_ID, SUNSHINE_CLIENT_UNIQUE_ID, SUNSHINE_CLIENT_USE_VDD,
     // and SUNSHINE_CLIENT_CERT_UUID are set in launch_session->env (in nvhttp.cpp) but not here,
     // as they are used for different purposes (e.g., display device session management).
-    _env["SUNSHINE_APP_ID"] = std::to_string(_app_id);
-    _env["SUNSHINE_APP_NAME"] = _app.name;
     _env["SUNSHINE_CLIENT_NAME"] = launch_session->client_name;
     _env["SUNSHINE_CLIENT_WIDTH"] = std::to_string(launch_session->width);
     _env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(launch_session->height);
@@ -506,8 +504,6 @@ namespace proc {
 
     const auto &app = *iter;
     launch_session.appid = app_id;
-    launch_session.env["SUNSHINE_APP_ID"] = std::to_string(app_id);
-    launch_session.env["SUNSHINE_APP_NAME"] = app.name;
     if (app.display_target < 0) {
       return true;
     }
@@ -517,9 +513,9 @@ namespace proc {
     // 应用显示方案的优先级高于客户端旧版 VDD 布局参数。
     launch_session.custom_vdd_screen_mode = -1;
     launch_session.stream_current_physical_mode = app.stream_current_physical_mode;
-    if (app.display_device_prep >= 0) {
-      launch_session.custom_screen_mode = app.display_device_prep;
-    }
+    launch_session.custom_screen_mode = app.display_device_prep >= 0 ?
+                                          app.display_device_prep :
+                                          static_cast<int>(display_device::parsed_config_t::device_prep_e::ensure_active);
     if (app.display_resolution_mode >= 0) {
       launch_session.resolution_change_override = app.display_resolution_mode;
       launch_session.manual_resolution_override = app.display_resolution;
@@ -528,7 +524,6 @@ namespace proc {
       launch_session.refresh_rate_change_override = app.display_refresh_rate_mode;
       launch_session.manual_refresh_rate_override = app.display_refresh_rate;
     }
-    launch_session.vdd_identity_mode = app.vdd_identity_mode;
     if (!app.stream_current_physical_mode) {
       launch_session.restore_display_on_disconnect = app.restore_display_on_disconnect;
     }
@@ -909,7 +904,6 @@ namespace proc {
         auto display_resolution = app_node.get_optional<std::string>("display-resolution"s);
         auto display_refresh_rate_mode = app_node.get_optional<std::string>("display-refresh-rate-mode"s);
         auto display_refresh_rate = app_node.get_optional<std::string>("display-refresh-rate"s);
-        auto vdd_identity = app_node.get_optional<std::string>("display-vdd-identity"s);
         auto disconnect_action = app_node.get_optional<std::string>("display-disconnect-action"s);
         auto display_output_name = app_node.get_optional<std::string>("display-output-name"s);
 
@@ -1019,12 +1013,6 @@ namespace proc {
         else if (display_refresh_rate_mode && *display_refresh_rate_mode == "fixed"sv) {
           ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::manual);
           ctx.display_refresh_rate = display_refresh_rate.value_or("");
-        }
-        if (vdd_identity && *vdd_identity == "app"sv) {
-          ctx.vdd_identity_mode = 1;
-        }
-        else if (vdd_identity && *vdd_identity == "app-client"sv) {
-          ctx.vdd_identity_mode = 2;
         }
         ctx.restore_display_on_disconnect = disconnect_action && *disconnect_action == "restore"sv;
         ctx.display_output_name = display_output_name.value_or("");

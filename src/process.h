@@ -79,7 +79,6 @@ namespace proc {
     std::string display_resolution;
     std::string display_refresh_rate;
     std::string display_output_name;
-    int vdd_identity_mode {0};  ///< 0=global, 1=shared by app, 2=app and client
     bool restore_display_on_disconnect {false};
     std::chrono::seconds exit_timeout;
   };

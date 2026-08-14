@@ -843,11 +843,31 @@ namespace confighttp {
       };
 
       const auto normalize_display_profile = [&](pt::ptree &app_node) {
+        static const std::set<std::string> supported_fields {
+          "display-target",
+          "display-device-prep",
+          "display-resolution-mode",
+          "display-resolution",
+          "display-refresh-rate-mode",
+          "display-refresh-rate",
+          "display-output-name",
+          "display-disconnect-action",
+        };
+        std::vector<std::string> unsupported_fields;
+        for (const auto &[key, _] : app_node) {
+          if (key.starts_with("display-") && !supported_fields.contains(key)) {
+            unsupported_fields.emplace_back(key);
+          }
+        }
+        for (const auto &key : unsupported_fields) {
+          app_node.erase(key);
+        }
+
         const auto target = app_node.get_optional<std::string>("display-target");
         if (!target || target->empty()) {
           for (const auto *key : {
                  "display-target", "display-device-prep", "display-resolution-mode", "display-resolution",
-                 "display-refresh-rate-mode", "display-refresh-rate", "display-vdd-identity",
+                 "display-refresh-rate-mode", "display-refresh-rate",
                  "display-output-name", "display-disconnect-action"}) {
             app_node.erase(key);
           }
@@ -865,7 +885,7 @@ namespace confighttp {
           // optional exact physical-display selector.
           for (const auto *key : {
                  "display-device-prep", "display-resolution-mode", "display-resolution",
-                 "display-refresh-rate-mode", "display-refresh-rate", "display-vdd-identity",
+                 "display-refresh-rate-mode", "display-refresh-rate",
                  "display-disconnect-action"}) {
             app_node.erase(key);
           }
@@ -876,7 +896,7 @@ namespace confighttp {
           return std::find(values.begin(), values.end(), value) != values.end();
         };
         const auto prep = app_node.get<std::string>("display-device-prep", "ensure_active");
-        if (!one_of(prep, {"ensure_active"sv, "ensure_primary"sv, "ensure_secondary"sv, "ensure_only_display"sv})) {
+        if (!one_of(prep, {"no_operation"sv, "ensure_active"sv, "ensure_primary"sv, "ensure_secondary"sv, "ensure_only_display"sv})) {
           outputTree.put("status", "false");
           outputTree.put("error", "Invalid per-app display layout");
           return false;
@@ -884,11 +904,9 @@ namespace confighttp {
 
         const auto resolution_mode = app_node.get<std::string>("display-resolution-mode", "");
         const auto refresh_mode = app_node.get<std::string>("display-refresh-rate-mode", "");
-        const auto identity = app_node.get<std::string>("display-vdd-identity", "");
         const auto disconnect = app_node.get<std::string>("display-disconnect-action", "keep");
         if ((!resolution_mode.empty() && !one_of(resolution_mode, {"client"sv, "fixed"sv})) ||
             (!refresh_mode.empty() && !one_of(refresh_mode, {"client"sv, "fixed"sv})) ||
-            (!identity.empty() && !one_of(identity, {"app"sv, "app-client"sv})) ||
             !one_of(disconnect, {"keep"sv, "restore"sv})) {
           outputTree.put("status", "false");
           outputTree.put("error", "Invalid per-app display profile option");
@@ -906,7 +924,6 @@ namespace confighttp {
 
         if (resolution_mode != "fixed"sv) app_node.erase("display-resolution");
         if (refresh_mode != "fixed"sv) app_node.erase("display-refresh-rate");
-        if (*target != "virtual"sv) app_node.erase("display-vdd-identity");
         if (*target != "physical"sv) app_node.erase("display-output-name");
         return true;
       };

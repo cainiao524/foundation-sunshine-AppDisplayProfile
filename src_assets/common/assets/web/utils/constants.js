@@ -145,8 +145,6 @@ export const DEFAULT_BUILT_IN_APPS = {
 
 // 环境变量配置
 export const ENV_VARS_CONFIG = {
-  'SUNSHINE_APP_ID': 'apps.env_app_id',
-  'SUNSHINE_APP_NAME': 'apps.env_app_name',
   'SUNSHINE_CLIENT_NAME': 'apps.env_client_name',
   'SUNSHINE_CLIENT_WIDTH': 'apps.env_client_width',
   'SUNSHINE_CLIENT_HEIGHT': 'apps.env_client_height',

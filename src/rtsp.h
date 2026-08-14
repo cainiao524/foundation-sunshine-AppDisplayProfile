@@ -65,7 +65,6 @@ namespace rtsp_stream {
     int refresh_rate_change_override {-1};
     std::string manual_resolution_override;
     std::string manual_refresh_rate_override;
-    int vdd_identity_mode {0};  ///< 0=global, 1=shared by app, 2=app and client
     bool restore_display_on_disconnect {false};
     hdr::client_display_capabilities_t reported_hdr_capabilities;
     hdr::client_display_capabilities_t hdr_capabilities;
