@@ -377,12 +377,15 @@ jobs:
             artifacts/checksums.json
           if-no-files-found: error
 
-      - name: Create/Update GitHub Release
+      - name: Create GitHub Release
         if: needs.setup_release.outputs.publish_release == 'true'
-        uses: LizardByte/create-release-action@v2025.426.1549
+        uses: ncipollo/release-action@v1.14.0
         with:
           allowUpdates: false
+          artifactErrorsFailBuild: true
+          artifacts: "artifacts/*"
           body: ${{ needs.setup_release.outputs.release_body }}
+          commit: ${{ needs.setup_release.outputs.release_commit }}
           generateReleaseNotes: ${{ needs.setup_release.outputs.release_generate_release_notes }}
           name: ${{ needs.setup_release.outputs.release_name }}
           prerelease: false
