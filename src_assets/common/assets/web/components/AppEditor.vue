@@ -151,22 +151,12 @@
                 :title="t('apps.display_profile_title')"
                 parent-id="appFormAccordion"
               >
-                <FormField
-                  id="displayTarget"
-                  :label="t('apps.display_profile_policy')"
-                  :hint="t('apps.display_profile_policy_desc')"
-                >
-                  <select
-                    id="displayTarget"
-                    class="form-select form-control-enhanced"
-                    v-model="formData['display-target']"
-                  >
-                    <option value="">{{ t('apps.display_profile_inherit') }}</option>
-                    <option value="physical-current">{{ t('apps.display_profile_physical_current') }}</option>
-                    <option value="virtual">{{ t('apps.display_profile_virtual') }}</option>
-                    <option value="physical">{{ t('apps.display_profile_physical') }}</option>
-                  </select>
-                </FormField>
+                <NewDisplayOutputSelector
+                  v-model="appDisplayOutput"
+                  context="app"
+                  :platform="platform"
+                  :displays="displayDevices"
+                />
 
                 <template v-if="hasForcedDisplayProfile">
                   <div v-if="formData['display-target'] === 'virtual' && formData['display-device-prep'] === 'ensure_only_display'" class="alert alert-warning display-profile-alert" role="alert">
@@ -179,108 +169,74 @@
                     {{ t('apps.display_profile_physical_current_desc') }}
                   </div>
 
-                  <FormField
-                    v-if="formData['display-target'] === 'physical' || formData['display-target'] === 'physical-current'"
-                    id="displayOutputName"
-                    :label="t('apps.display_profile_output_name')"
-                    :hint="formData['display-target'] === 'physical-current'
-                      ? t('apps.display_profile_output_name_current_desc')
-                      : t('apps.display_profile_output_name_desc')"
-                  >
-                    <input
-                      id="displayOutputName"
-                      class="form-control form-control-enhanced monospace"
-                      v-model.trim="formData['display-output-name']"
-                      :placeholder="formData['display-target'] === 'physical-current'
-                        ? t('apps.display_profile_output_name_current_placeholder')
-                        : t('apps.display_profile_output_name_placeholder')"
-                    />
-                  </FormField>
-
                   <DisplayPreparationPicker
                     v-if="formData['display-target'] !== 'physical-current'"
                     v-model="formData['display-device-prep']"
                   />
 
-                  <div v-if="formData['display-target'] !== 'physical-current'" class="display-profile-grid">
-                    <FormField
-                      id="displayResolutionMode"
-                      :label="t('apps.display_profile_resolution')"
-                      :hint="t('apps.display_profile_resolution_desc')"
-                    >
-                      <select
-                        id="displayResolutionMode"
-                        class="form-select form-control-enhanced"
-                        v-model="formData['display-resolution-mode']"
-                      >
-                        <option value="">{{ t('apps.display_profile_inherit') }}</option>
-                        <option value="client">{{ t('apps.display_profile_follow_client') }}</option>
-                        <option value="fixed">{{ t('apps.display_profile_fixed') }}</option>
-                      </select>
-                    </FormField>
+                  <details v-if="formData['display-target'] !== 'physical-current'" class="display-options-note">
+                    <summary>
+                      <i class="fas fa-circle-info" aria-hidden="true"></i>
+                      {{ tp('config.display_device_options_note') }}
+                    </summary>
+                    <p class="pre-line">{{ tp('config.display_device_options_note_desc') }}</p>
+                  </details>
 
-                    <FormField
-                      id="displayRefreshRateMode"
-                      :label="t('apps.display_profile_refresh_rate')"
-                      :hint="t('apps.display_profile_refresh_rate_desc')"
+                  <div v-if="formData['display-target'] !== 'physical-current'" class="display-rule-grid">
+                    <DisplayRuleRadioGroup
+                      v-model="appResolutionRule"
+                      name="app_resolution_change"
+                      label-key="apps.display_profile_resolution"
+                      option-key-prefix="apps.display_profile_"
+                      :options="['inherit', 'follow_client', 'fixed']"
+                      :platform-aware="false"
                     >
-                      <select
-                        id="displayRefreshRateMode"
-                        class="form-select form-control-enhanced"
-                        v-model="formData['display-refresh-rate-mode']"
-                      >
-                        <option value="">{{ t('apps.display_profile_inherit') }}</option>
-                        <option value="client">{{ t('apps.display_profile_follow_client') }}</option>
-                        <option value="fixed">{{ t('apps.display_profile_fixed') }}</option>
-                      </select>
-                    </FormField>
-                  </div>
+                      <div class="form-text" v-if="appResolutionRule === 'follow_client' || appResolutionRule === 'fixed'">
+                        {{ tp('config.resolution_change_ogs_desc') }}
+                      </div>
+                      <div class="nested-setting mt-2" v-if="appResolutionRule === 'fixed'">
+                        <div class="form-text">{{ tp('config.resolution_change_manual_desc') }}</div>
+                        <input
+                          id="app_manual_resolution"
+                          type="text"
+                          class="form-control"
+                          placeholder="2560x1440"
+                          v-model.trim="formData['display-resolution']"
+                        />
+                      </div>
+                    </DisplayRuleRadioGroup>
 
-                  <div v-if="formData['display-target'] !== 'physical-current'" class="display-profile-grid">
-                    <FormField
-                      v-if="formData['display-resolution-mode'] === 'fixed'"
-                      id="displayResolution"
-                      :label="t('apps.display_profile_fixed_resolution')"
-                      :hint="t('apps.display_profile_fixed_resolution_desc')"
+                    <DisplayRuleRadioGroup
+                      v-model="appRefreshRateRule"
+                      name="app_refresh_rate_change"
+                      label-key="apps.display_profile_refresh_rate"
+                      option-key-prefix="apps.display_profile_"
+                      :options="['inherit', 'follow_client', 'fixed']"
+                      :platform-aware="false"
                     >
-                      <input
-                        id="displayResolution"
-                        class="form-control form-control-enhanced monospace"
-                        v-model.trim="formData['display-resolution']"
-                        placeholder="1920x1080"
-                      />
-                    </FormField>
+                      <div class="nested-setting mt-2" v-if="appRefreshRateRule === 'fixed'">
+                        <div class="form-text">{{ tp('config.refresh_rate_change_manual_desc') }}</div>
+                        <input
+                          id="app_manual_refresh_rate"
+                          type="text"
+                          class="form-control"
+                          placeholder="59.95"
+                          v-model.trim="formData['display-refresh-rate']"
+                        />
+                      </div>
+                    </DisplayRuleRadioGroup>
 
-                    <FormField
-                      v-if="formData['display-refresh-rate-mode'] === 'fixed'"
-                      id="displayRefreshRate"
-                      :label="t('apps.display_profile_fixed_refresh_rate')"
-                      :hint="t('apps.display_profile_fixed_refresh_rate_desc')"
-                    >
-                      <input
-                        id="displayRefreshRate"
-                        class="form-control form-control-enhanced monospace"
-                        v-model.trim="formData['display-refresh-rate']"
-                        placeholder="60"
-                      />
-                    </FormField>
-                  </div>
-
-                  <FormField
-                    v-if="formData['display-target'] !== 'physical-current'"
-                    id="displayDisconnectAction"
-                    :label="t('apps.display_profile_disconnect')"
-                    :hint="t('apps.display_profile_disconnect_desc')"
-                  >
-                    <select
-                      id="displayDisconnectAction"
-                      class="form-select form-control-enhanced"
+                    <DisplayRuleRadioGroup
                       v-model="formData['display-disconnect-action']"
+                      name="app_display_disconnect_action"
+                      label-key="apps.display_profile_disconnect"
+                      option-key-prefix="apps.display_profile_disconnect_"
+                      :options="['keep', 'restore']"
+                      :platform-aware="false"
                     >
-                      <option value="keep">{{ t('apps.display_profile_disconnect_keep') }}</option>
-                      <option value="restore">{{ t('apps.display_profile_disconnect_restore') }}</option>
-                    </select>
-                  </FormField>
+                      <div class="form-text">{{ t('apps.display_profile_disconnect_desc') }}</div>
+                    </DisplayRuleRadioGroup>
+                  </div>
                 </template>
               </AccordionItem>
 
@@ -458,6 +414,7 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
+import { usePlatformI18n } from '../platform-i18n'
 import { validateField as validateFieldHelper, validateAppForm } from '../utils/validation.js'
 import { nanoid } from 'nanoid'
 import CommandTable from './CommandTable.vue'
@@ -466,8 +423,10 @@ import AccordionItem from './AccordionItem.vue'
 import FormField from './FormField.vue'
 import CheckboxField from './CheckboxField.vue'
 import DisplayPreparationPicker from '../configs/tabs/audiovideo/DisplayPreparationPicker.vue'
+import DisplayRuleRadioGroup from '../configs/tabs/audiovideo/DisplayRuleRadioGroup.vue'
+import NewDisplayOutputSelector from '../configs/tabs/audiovideo/NewDisplayOutputSelector.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
-import { apiPostJson } from '../utils/apiFetch.js'
+import { apiJson, apiPostJson } from '../utils/apiFetch.js'
 import { deepClone } from '../utils/helpers.js'
 import { normalizeAppDisplayProfile } from '../utils/appDisplayProfile.js'
 
@@ -521,6 +480,8 @@ provide(
 const emit = defineEmits(['close', 'save-app'])
 
 const { t } = useI18n()
+const platformMessage = usePlatformI18n(props.platform)
+const tp = (key) => platformMessage.getMessageUsingPlatform(key)
 
 const modalElement = ref(null)
 const fileInput = ref(null)
@@ -530,9 +491,51 @@ const validation = ref({})
 const imageError = ref('')
 const modalInstance = ref(null)
 const fileSelector = ref(null)
+const displayDevices = ref([])
 
 const isWindows = computed(() => props.platform === 'windows')
 const hasForcedDisplayProfile = computed(() => Boolean(formData.value?.['display-target']))
+const appDisplayOutput = computed({
+  get: () => {
+    const target = formData.value?.['display-target']
+    if (!target) return '__inherit__'
+    if (target === 'physical-current') return '__physical_current__'
+    if (target === 'virtual') return 'ZakoHDR'
+    return formData.value?.['display-output-name'] || '__physical__'
+  },
+  set: (outputName) => {
+    if (outputName === '__inherit__') {
+      formData.value['display-target'] = ''
+      formData.value['display-output-name'] = ''
+    } else if (outputName === '__physical_current__') {
+      formData.value['display-target'] = 'physical-current'
+      formData.value['display-output-name'] = ''
+    } else if (outputName === 'ZakoHDR') {
+      formData.value['display-target'] = 'virtual'
+      formData.value['display-output-name'] = ''
+    } else {
+      formData.value['display-target'] = 'physical'
+      formData.value['display-output-name'] = outputName === '__physical__' ? '' : outputName
+    }
+  },
+})
+const displayRuleModes = Object.freeze({
+  '': 'inherit',
+  client: 'follow_client',
+  fixed: 'fixed',
+})
+const appResolutionRule = computed({
+  get: () => displayRuleModes[formData.value?.['display-resolution-mode']] || 'inherit',
+  set: (mode) => {
+    formData.value['display-resolution-mode'] = mode === 'follow_client' ? 'client' : mode === 'fixed' ? 'fixed' : ''
+  },
+})
+const appRefreshRateRule = computed({
+  get: () => displayRuleModes[formData.value?.['display-refresh-rate-mode']] || 'inherit',
+  set: (mode) => {
+    formData.value['display-refresh-rate-mode'] = mode === 'follow_client' ? 'client' : mode === 'fixed' ? 'fixed' : ''
+  },
+})
 const isNewApp = computed(() => !props.app || props.app.index === -1)
 const displayProfileValid = computed(() => {
   if (!formData.value?.['display-target']) return true
@@ -588,6 +591,15 @@ const initializeFileSelector = () => {
     onError: notify('error'),
     onInfo: notify('info'),
   })
+}
+
+const loadDisplayDevices = async () => {
+  try {
+    const config = await apiJson('/api/config')
+    displayDevices.value = Array.isArray(config.display_devices) ? config.display_devices : []
+  } catch (_) {
+    displayDevices.value = []
+  }
 }
 
 const ensureDefaultValues = () => {
@@ -818,6 +830,7 @@ watch(
 )
 
 onMounted(() => {
+  void loadDisplayDevices()
   nextTick(() => {
     initializeModal()
     initializeFileSelector()
@@ -880,10 +893,65 @@ onBeforeUnmount(cleanup)
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
-.display-profile-grid {
+.display-rule-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 1rem;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 13rem), 1fr));
+  gap: 0.75rem;
+  margin-bottom: 1rem;
+}
+
+.display-options-note {
+  margin: 0 0 1rem;
+  border: 1px solid var(--ui-border);
+  border-radius: var(--ui-radius-sm);
+  background: var(--ui-accent-soft);
+  color: var(--ui-text-secondary);
+}
+
+.display-options-note summary {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.7rem 0.85rem;
+  color: var(--ui-text-primary);
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  list-style: none;
+}
+
+.display-options-note summary::-webkit-details-marker {
+  display: none;
+}
+
+.display-options-note summary i {
+  color: var(--ui-accent);
+}
+
+.display-options-note summary::after {
+  margin-left: auto;
+  font-family: 'Font Awesome 6 Free';
+  font-weight: 900;
+  content: '\f078';
+  transition: transform 0.2s ease;
+}
+
+.display-options-note[open] summary::after {
+  transform: rotate(180deg);
+}
+
+.display-options-note p {
+  margin: 0;
+  padding: 0 0.85rem 0.85rem;
+  font-size: 0.82rem;
+  line-height: 1.5;
+}
+
+.nested-setting {
+  padding: 0.75rem;
+  border-left: 3px solid var(--ui-border-strong);
+  border-radius: 0 var(--ui-radius-sm) var(--ui-radius-sm) 0;
+  background: var(--ui-surface-strong);
 }
 
 .display-profile-alert {
@@ -893,9 +961,8 @@ onBeforeUnmount(cleanup)
 }
 
 @media (max-width: 767.98px) {
-  .display-profile-grid {
+  .display-rule-grid {
     grid-template-columns: minmax(0, 1fr);
-    gap: 0;
   }
 }
 

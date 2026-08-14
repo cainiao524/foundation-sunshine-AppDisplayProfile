@@ -19,6 +19,10 @@ defineProps({
     type: Array,
     required: true,
   },
+  platformAware: {
+    type: Boolean,
+    default: true,
+  },
 })
 
 const emit = defineEmits(['update:modelValue'])
@@ -27,7 +31,7 @@ const emit = defineEmits(['update:modelValue'])
 <template>
   <section class="display-setting-card">
     <h3 :id="`${name}_label`" class="display-setting-title">
-      {{ $tp(labelKey) }}
+      {{ platformAware ? $tp(labelKey) : $t(labelKey) }}
     </h3>
     <div class="display-rule-options" role="radiogroup" :aria-labelledby="`${name}_label`">
       <label
@@ -44,7 +48,7 @@ const emit = defineEmits(['update:modelValue'])
           :checked="modelValue === option"
           @change="emit('update:modelValue', option)"
         />
-        <span>{{ $tp(optionKeyPrefix + option) }}</span>
+        <span>{{ platformAware ? $tp(optionKeyPrefix + option) : $t(optionKeyPrefix + option) }}</span>
       </label>
     </div>
     <slot></slot>

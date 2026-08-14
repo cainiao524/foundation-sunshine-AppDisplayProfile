@@ -33,6 +33,12 @@ export function normalizeAppDisplayProfile(app) {
     return normalized
   }
 
+  if (!['', 'client', 'fixed'].includes(normalized['display-resolution-mode'])) {
+    normalized['display-resolution-mode'] = ''
+  }
+  if (!['', 'client', 'fixed'].includes(normalized['display-refresh-rate-mode'])) {
+    normalized['display-refresh-rate-mode'] = ''
+  }
   if (normalized['display-resolution-mode'] !== 'fixed') delete normalized['display-resolution']
   if (normalized['display-refresh-rate-mode'] !== 'fixed') delete normalized['display-refresh-rate']
   if (normalized['display-target'] !== 'physical') delete normalized['display-output-name']

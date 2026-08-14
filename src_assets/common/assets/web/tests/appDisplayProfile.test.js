@@ -53,6 +53,26 @@ test('应用编辑器直接复用主设置显示准备组件', async () => {
 
   assert.match(source, /import DisplayPreparationPicker from/)
   assert.match(source, /<DisplayPreparationPicker/)
+  assert.match(source, /import NewDisplayOutputSelector from/)
+  assert.match(source, /<NewDisplayOutputSelector/)
+  assert.match(source, /import DisplayRuleRadioGroup from/)
+  assert.match(source, /<DisplayRuleRadioGroup/)
   assert.match(source, /provide\(\s*'platform'/)
   assert.doesNotMatch(source, /id="displayDevicePrep"/)
+  assert.doesNotMatch(source, /id="displayTarget"/)
+  assert.doesNotMatch(source, /id="displayResolutionMode"/)
+  assert.doesNotMatch(source, /id="displayRefreshRateMode"/)
+})
+
+test('应用分辨率和刷新率规则只保留既有字段值', () => {
+  const normalized = normalizeAppDisplayProfile({
+    name: 'Desktop',
+    'display-target': 'virtual',
+    'display-device-prep': 'ensure_active',
+    'display-resolution-mode': 'no_operation',
+    'display-refresh-rate-mode': 'no_operation',
+  })
+
+  assert.equal(normalized['display-resolution-mode'], '')
+  assert.equal(normalized['display-refresh-rate-mode'], '')
 })
