@@ -93,19 +93,20 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 - 分辨率和刷新率可以继续取当前 Moonlight 客户端请求，也可以由 APP 固定。
 - 本 Fork 不另建显示器后端，仍使用基地版的显示意图、拓扑准备、ZakoVDD、恢复和探测流程。
 - 配置保存在 Sunshine 服务端的 APP 数据中，不要求修改 Moonlight。
+- `physical-current` 由主机当前物理屏模式决定串流尺寸和帧率，不修改显示设置，也不允许回退到 VDD。
 
 ### 4.2 APP 配置字段
 
 | 字段 | 可用值 | 含义 |
 | --- | --- | --- |
-| `display-target` | 空、`virtual`、`physical` | 跟随全局、强制虚拟屏、强制物理屏 |
+| `display-target` | 空、`virtual`、`physical`、`physical-current` | 跟随全局、强制虚拟屏、强制物理屏、原样串流当前物理屏 |
 | `display-device-prep` | `ensure_active`、`ensure_primary`、`ensure_secondary`、`ensure_only_display` | 保证目标启用、设为主屏、设为副屏、仅保留目标显示器 |
 | `display-resolution-mode` | 空、`client`、`fixed` | 跟随全局、跟随客户端、固定分辨率 |
 | `display-resolution` | 例如 `1920x1080` | 固定分辨率，仅在 `fixed` 时保存 |
 | `display-refresh-rate-mode` | 空、`client`、`fixed` | 跟随全局、跟随客户端、固定刷新率 |
 | `display-refresh-rate` | 例如 `60`、`120` | 固定刷新率，仅在 `fixed` 时保存 |
 | `display-vdd-identity` | 空、`app`、`app-client` | 跟随全局、每个 APP 共用、每个 APP 与客户端组合独立 |
-| `display-output-name` | 显示设备编号 | 强制物理屏时可选 |
+| `display-output-name` | 显示设备编号 | 强制物理屏或原样串流物理屏时可选 |
 | `display-disconnect-action` | `keep`、`restore` | 断开后保留当前方案，或恢复原物理显示布局 |
 
 界面默认值以 `AppEditor.vue` 为准。当前新建强制虚拟屏方案默认使用 `app-client` 身份和 `keep` 断开策略。
@@ -125,6 +126,17 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
   "display-disconnect-action": "keep"
 }
 ```
+
+原样串流当前主物理屏，不要求 Moonlight 修改分辨率或帧率：
+
+```json
+{
+  "name": "原样串流当前显示器",
+  "display-target": "physical-current"
+}
+```
+
+这个模式只保存可选的 `display-output-name`。它在启动预检和 RTSP 握手分别读取一次当前物理显示模式，用主机当前宽度、高度和刷新率覆盖客户端请求；不调用显示配置、不恢复显示状态、不创建或回退到 VDD。指定屏不可用时直接失败。串流期间来自客户端的动态分辨率和帧率请求也会被忽略。
 
 ```json
 {
@@ -152,9 +164,11 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 | `src/process.h`、`src/process.cpp` | 解析 APP 字段，并通过 `apply_app_display_profile()` 覆盖启动会话 |
 | `src/rtsp.h` | 在启动会话中携带显示目标、分辨率、刷新率、VDD 身份和恢复策略 |
 | `src/nvhttp.cpp` | APP 启动和恢复时，在显示器准备前应用 APP 方案 |
+| `src/nvhttp_stream_start.cpp` | 原样串流模式只读解析物理屏和当前模式，并绕过显示配置与恢复 |
 | `src/display_device/parsed_config.cpp` | 把 APP 覆盖转换成基地版显示意图和显示请求 |
 | `src/display_device/session.cpp` | 根据全局、APP 或 APP+客户端生成 VDD 身份并复用现有创建流程 |
-| `src/stream.cpp` | 动态分辨率时重新应用 APP 方案，并在最后会话断开时执行恢复策略 |
+| `src/rtsp.cpp`、`src/video.*` | 在握手时覆盖串流规格，锁定捕获目标并禁止静默换屏 |
+| `src/stream.cpp` | 动态参数时重新应用或保护 APP 方案，并在最后会话断开时执行恢复策略 |
 | `docs/downstream/app-display-profile.md` | 字段和底层维护要点 |
 
 ### 5.2 启动和恢复顺序
@@ -164,7 +178,7 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 1. 解析标准 GameStream/Moonlight 启动参数。
 2. 根据 APP 编号找到服务端 APP 配置。
 3. 调用 `proc::proc.apply_app_display_profile()` 覆盖启动会话。
-4. 调用基地版现有显示器准备和编码器探测流程。
+4. 调用显示器准备和编码器探测入口；`physical-current` 只读取物理屏并精确探测，其余模式调用基地版现有显示配置流程。
 5. 启动或恢复 APP。
 
 不要把显示方案放进 APP 前置命令。显示器准备早于前置命令，放在那里会来不及影响捕获目标。
@@ -287,6 +301,8 @@ git diff --check
 - 同一 Moonlight 设备可以在副屏 APP 和独占屏 APP 之间退出并切换。
 - 强制虚拟副屏、虚拟主屏和仅虚拟屏。
 - 强制物理屏以及不存在的物理屏编号错误处理。
+- 原样串流当前物理屏的宽度、高度和刷新率覆盖客户端请求，且显示拓扑、模式与 VDD 数量不变。
+- 原样串流指定屏不存在、未启用或指向 VDD 时直接失败，不捕获其他屏幕。
 - 跟随客户端与固定分辨率、刷新率。
 - `app` 和 `app-client` 两种 VDD 身份。
 - 断开保留与断开恢复。

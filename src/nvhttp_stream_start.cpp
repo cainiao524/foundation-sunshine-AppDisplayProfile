@@ -4,8 +4,10 @@
  */
 
 // standard includes
+#include <algorithm>
 #include <array>
 #include <chrono>
+#include <cmath>
 #include <string>
 #include <thread>
 #include <utility>
@@ -25,6 +27,9 @@ namespace nvhttp::stream_start {
   namespace pt = boost::property_tree;
 
   namespace {
+
+    void
+    set_video_probe_error(pt::ptree &tree);
 
     struct auto_recovery_result_t {
       bool attempted { false };
@@ -51,6 +56,66 @@ namespace nvhttp::stream_start {
     video::probe_target_t
     make_vdd_probe_target() {
       return { config::video.output_name, video::probe_target_policy_e::vdd_compatible };
+    }
+
+    bool
+    prepare_current_physical_display(
+      pt::ptree &tree,
+      rtsp_stream::launch_session_t &launch_session) {
+      std::string preferred_display;
+      if (const auto it = launch_session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != launch_session.env.end()) {
+        preferred_display = it->to_string();
+      }
+
+      const auto physical_display = display_device::resolve_current_physical_display(preferred_display);
+      if (!physical_display) {
+        set_sunshine_error(
+          tree,
+          503,
+          preferred_display.empty() ?
+            "No active physical display is available for unchanged-display streaming." :
+            "The physical display selected for unchanged-display streaming is not active.",
+          "PHYSICAL_DISPLAY_UNAVAILABLE",
+          "Turn on or reconnect the physical display, then try again.",
+          "activate_physical_display",
+          "display",
+          "current_physical_preflight",
+          true);
+        return false;
+      }
+
+      const auto &mode = physical_display->mode;
+      launch_session.current_physical_display_id = physical_display->device_id;
+      launch_session.current_physical_width = mode.resolution.width;
+      launch_session.current_physical_height = mode.resolution.height;
+      launch_session.current_physical_refresh_numerator = mode.refresh_rate.numerator;
+      launch_session.current_physical_refresh_denominator = mode.refresh_rate.denominator;
+      launch_session.width = static_cast<int>(mode.resolution.width);
+      launch_session.height = static_cast<int>(mode.resolution.height);
+      launch_session.fps = std::max(1, static_cast<int>(std::lround(
+        static_cast<double>(mode.refresh_rate.numerator) / mode.refresh_rate.denominator)));
+      launch_session.use_vdd = false;
+      launch_session.env["SUNSHINE_CLIENT_USE_VDD"] = "false";
+      launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = physical_display->device_id;
+      launch_session.env["SUNSHINE_CLIENT_WIDTH"] = std::to_string(launch_session.width);
+      launch_session.env["SUNSHINE_CLIENT_HEIGHT"] = std::to_string(launch_session.height);
+      launch_session.env["SUNSHINE_CLIENT_FPS"] = std::to_string(launch_session.fps);
+
+      BOOST_LOG(info) << "Unchanged physical-display stream resolved [device="
+                      << physical_display->device_id << ", mode="
+                      << mode.resolution.width << 'x' << mode.resolution.height << '@'
+                      << mode.refresh_rate.numerator << '/' << mode.refresh_rate.denominator
+                      << "]; display configuration and VDD recovery are disabled.";
+
+      if (video::probe_encoders(video::probe_target_t {
+            physical_display->device_id,
+            video::probe_target_policy_e::exact
+          })) {
+        set_video_probe_error(tree);
+        return false;
+      }
+
+      return true;
     }
 
     video::probe_target_t
@@ -667,6 +732,12 @@ namespace nvhttp::stream_start {
     pt::ptree &tree,
     rtsp_stream::launch_session_t &launch_session,
     bool is_reconfigure) {
+    if (launch_session.stream_current_physical_mode) {
+      // This path deliberately bypasses configure_display() and every recovery
+      // path. In particular, it must not activate, re-mode, restore, or create a VDD.
+      return prepare_current_physical_display(tree, launch_session);
+    }
+
     const auto intent = display_device::resolve_display_intent(config::video, launch_session);
     if (!validate_display_intent(tree, intent)) {
       return false;

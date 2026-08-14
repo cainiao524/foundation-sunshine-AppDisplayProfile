@@ -53,6 +53,12 @@ namespace rtsp_stream {
     bool use_vdd;
     int custom_screen_mode;
     int display_target_override {-1};  ///< -1=inherit, 0=physical, 1=virtual
+    bool stream_current_physical_mode {false};
+    std::string current_physical_display_id;
+    unsigned int current_physical_width {0};
+    unsigned int current_physical_height {0};
+    unsigned int current_physical_refresh_numerator {0};
+    unsigned int current_physical_refresh_denominator {1};
     int resolution_change_override {-1};
     int refresh_rate_change_override {-1};
     std::string manual_resolution_override;

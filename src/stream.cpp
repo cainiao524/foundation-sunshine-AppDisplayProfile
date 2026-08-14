@@ -550,6 +550,7 @@ namespace stream {
     std::string client_cert_uuid;
     bool use_vdd {false};
     int custom_screen_mode {-1};
+    bool stream_current_physical_mode {false};
     bool restore_display_on_disconnect {false};
     bool highly_suspected_unknown_client {false};
     std::string app_name;
@@ -1706,6 +1707,12 @@ namespace stream {
 
     // 辅助函数：处理分辨率变更
     auto handle_resolution_change = [](session_t *session, int new_width, int new_height) {
+      if (session->stream_current_physical_mode) {
+        BOOST_LOG(info) << "Ignoring a client resolution change for an unchanged physical-display stream; "
+                           "the host display remains authoritative.";
+        return;
+      }
+
       int old_width = session->config.monitor.width;
       int old_height = session->config.monitor.height;
       
@@ -1876,6 +1883,12 @@ namespace stream {
         }
 
         const float new_fps = *reinterpret_cast<const float *>(payload.data() + sizeof(int));
+
+        if (session->stream_current_physical_mode) {
+          BOOST_LOG(info) << "Ignoring a client FPS change for an unchanged physical-display stream; "
+                             "the host display remains authoritative.";
+          return;
+        }
         
         if (new_fps <= 0.0f || new_fps > 1000.0f) {
           BOOST_LOG(warning) << "Invalid FPS value: " << new_fps;
@@ -3802,7 +3815,7 @@ namespace stream {
 
         // If this is the last non-control-only session, invoke the platform callbacks
         if (unregister_video_session() == 0) {
-          bool restore_display_state { true };
+          bool restore_display_state { !session.stream_current_physical_mode };
           if (proc::proc.running()) {
             tray_state::set_paused(proc::proc.get_last_run_app_name());
 #if defined SUNSHINE_TRAY && SUNSHINE_TRAY >= 1
@@ -4023,6 +4036,7 @@ namespace stream {
       session->client_cert_uuid = launch_session.client_cert_uuid;
       session->use_vdd = launch_session.use_vdd;
       session->custom_screen_mode = launch_session.custom_screen_mode;
+      session->stream_current_physical_mode = launch_session.stream_current_physical_mode;
       session->restore_display_on_disconnect = launch_session.restore_display_on_disconnect;
       session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;
       session->app_id = launch_session.appid;

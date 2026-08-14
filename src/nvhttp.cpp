@@ -636,7 +636,7 @@ namespace nvhttp {
       // the moment. This should to be done before probing encoders as it could
       // change display device's state.
       // The display should be restored by the fail guard in case something happens.
-      need_to_restore_display_state = true;
+      need_to_restore_display_state = !launch_session->stream_current_physical_mode;
 
       if (!stream_start::prepare_display_and_probe_encoders(tree, *launch_session, true)) {
         tree.put("root.gamesession", 0);
@@ -807,7 +807,7 @@ namespace nvhttp {
         tree.put("root.resume", 0);
         return;
       }
-      need_to_restore_display_state = true;
+      need_to_restore_display_state = !launch_session->stream_current_physical_mode;
     }
 
     auto encryption_mode = net::encryption_mode_for_address(request->remote_endpoint().address());
@@ -890,8 +890,16 @@ namespace nvhttp {
     // GameStream 的 /cancel 表示退出当前应用，而普通断开由 RTSP/控制通道处理。
     // 清理可能需要等待编码器和应用退出，不能阻塞 NVHTTP 工作线程。
     if (!global_cancel_pending.test_and_set(boost::memory_order_acq_rel)) {
+      bool preserve_current_display = false;
+      const auto running_app_id = proc::proc.running();
+      if (running_app_id > 0) {
+        rtsp_stream::launch_session_t app_profile {};
+        proc::proc.apply_app_display_profile(running_app_id, app_profile);
+        preserve_current_display = app_profile.stream_current_physical_mode;
+      }
+
       BOOST_LOG(info) << "Global app cancel accepted; stopping all streaming sessions asynchronously"sv;
-      rtsp_stream::terminate_sessions_async(stream::session::stop_reason_e::client_cancel, []() {
+      rtsp_stream::terminate_sessions_async(stream::session::stop_reason_e::client_cancel, [preserve_current_display]() {
         auto clear_pending = util::fail_guard([]() {
           global_cancel_pending.clear(boost::memory_order_release);
         });
@@ -908,14 +916,16 @@ namespace nvhttp {
           BOOST_LOG(error) << "Failed to terminate the running application during app cancel"sv;
         }
 
-        try {
-          display_device::session_t::get().restore_state();
-        }
-        catch (const std::exception &e) {
-          BOOST_LOG(error) << "Failed to restore display state during app cancel: "sv << e.what();
-        }
-        catch (...) {
-          BOOST_LOG(error) << "Failed to restore display state during app cancel"sv;
+        if (!preserve_current_display) {
+          try {
+            display_device::session_t::get().restore_state();
+          }
+          catch (const std::exception &e) {
+            BOOST_LOG(error) << "Failed to restore display state during app cancel: "sv << e.what();
+          }
+          catch (...) {
+            BOOST_LOG(error) << "Failed to restore display state during app cancel"sv;
+          }
         }
 
         BOOST_LOG(info) << "Global app cancel cleanup finished"sv;

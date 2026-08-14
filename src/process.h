@@ -72,6 +72,7 @@ namespace proc {
     int mouse_mode;  ///< 0=auto (use global config), 1=force virtual mouse, 2=force SendInput
     int gamepad_mode;  ///< 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4
     int display_target {-1};  ///< -1=inherit, 0=physical, 1=virtual
+    bool stream_current_physical_mode {false};  ///< Stream an active physical display exactly as-is.
     int display_device_prep {-1};
     int display_resolution_mode {-1};  ///< -1=inherit, 1=client, 2=fixed
     int display_refresh_rate_mode {-1};  ///< -1=inherit, 1=client, 2=fixed

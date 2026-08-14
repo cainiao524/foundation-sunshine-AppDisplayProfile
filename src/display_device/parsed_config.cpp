@@ -1,3 +1,6 @@
+// standard includes
+#include <algorithm>
+
 // lib includes
 #include <boost/algorithm/string.hpp>
 #include <boost/regex.hpp>
@@ -6,6 +9,7 @@
 
 // local includes
 #include "display_device.h"
+#include "current_physical_display.h"
 #include "parsed_config.h"
 #include "src/config.h"
 #include "src/globals.h"
@@ -539,6 +543,53 @@ namespace display_device {
       }
     }
   }  // namespace
+
+  boost::optional<current_physical_display_t>
+  resolve_current_physical_display(const std::string &preferred_selector) {
+#ifdef _WIN32
+    const auto checked_devices = enum_available_devices_checked();
+    if (!checked_devices) {
+      BOOST_LOG(warning) << "Could not enumerate displays while resolving the current physical display."sv;
+      return boost::none;
+    }
+    const auto &devices = *checked_devices;
+#else
+    const auto devices = enum_available_devices();
+#endif
+
+    const auto selected_id = select_current_physical_display_id(
+      devices,
+      preferred_selector,
+#ifdef _WIN32
+      ZAKO_NAME
+#else
+      {}
+#endif
+    );
+    if (!selected_id) {
+      BOOST_LOG(error) << (preferred_selector.empty() ?
+                             "No active physical display is available for unchanged-display streaming."sv :
+                             "The requested current physical display is not active: "sv)
+                       << preferred_selector;
+      return boost::none;
+    }
+
+    const auto selected = devices.find(*selected_id);
+    const auto modes = get_current_display_modes({selected->first});
+    const auto mode = modes.find(selected->first);
+    if (mode == modes.end() || mode->second.resolution.width == 0 || mode->second.resolution.height == 0 ||
+        mode->second.refresh_rate.numerator == 0 || mode->second.refresh_rate.denominator == 0) {
+      BOOST_LOG(error) << "Could not read the current mode for physical display: "sv << selected->first;
+      return boost::none;
+    }
+
+    return current_physical_display_t {
+      selected->first,
+      selected->second.display_name,
+      selected->second.friendly_name,
+      mode->second
+    };
+  }
 
   display_intent_t
   resolve_display_intent(const config::video_t &config, const rtsp_stream::launch_session_t &session) {

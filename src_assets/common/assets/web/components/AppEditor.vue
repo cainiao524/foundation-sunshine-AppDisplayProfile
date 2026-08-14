@@ -162,6 +162,7 @@
                     v-model="formData['display-target']"
                   >
                     <option value="">{{ t('apps.display_profile_inherit') }}</option>
+                    <option value="physical-current">{{ t('apps.display_profile_physical_current') }}</option>
                     <option value="virtual">{{ t('apps.display_profile_virtual') }}</option>
                     <option value="physical">{{ t('apps.display_profile_physical') }}</option>
                   </select>
@@ -173,21 +174,31 @@
                     {{ t('apps.display_profile_exclusive_warning') }}
                   </div>
 
+                  <div v-if="formData['display-target'] === 'physical-current'" class="alert alert-info display-profile-alert" role="alert">
+                    <i class="fas fa-circle-info me-2"></i>
+                    {{ t('apps.display_profile_physical_current_desc') }}
+                  </div>
+
                   <FormField
-                    v-if="formData['display-target'] === 'physical'"
+                    v-if="formData['display-target'] === 'physical' || formData['display-target'] === 'physical-current'"
                     id="displayOutputName"
                     :label="t('apps.display_profile_output_name')"
-                    :hint="t('apps.display_profile_output_name_desc')"
+                    :hint="formData['display-target'] === 'physical-current'
+                      ? t('apps.display_profile_output_name_current_desc')
+                      : t('apps.display_profile_output_name_desc')"
                   >
                     <input
                       id="displayOutputName"
                       class="form-control form-control-enhanced monospace"
                       v-model.trim="formData['display-output-name']"
-                      :placeholder="t('apps.display_profile_output_name_placeholder')"
+                      :placeholder="formData['display-target'] === 'physical-current'
+                        ? t('apps.display_profile_output_name_current_placeholder')
+                        : t('apps.display_profile_output_name_placeholder')"
                     />
                   </FormField>
 
                   <FormField
+                    v-if="formData['display-target'] !== 'physical-current'"
                     id="displayDevicePrep"
                     :label="t('apps.display_profile_layout')"
                     :hint="t('apps.display_profile_layout_desc')"
@@ -221,7 +232,7 @@
                     </select>
                   </FormField>
 
-                  <div class="display-profile-grid">
+                  <div v-if="formData['display-target'] !== 'physical-current'" class="display-profile-grid">
                     <FormField
                       id="displayResolutionMode"
                       :label="t('apps.display_profile_resolution')"
@@ -255,7 +266,7 @@
                     </FormField>
                   </div>
 
-                  <div class="display-profile-grid">
+                  <div v-if="formData['display-target'] !== 'physical-current'" class="display-profile-grid">
                     <FormField
                       v-if="formData['display-resolution-mode'] === 'fixed'"
                       id="displayResolution"
@@ -286,6 +297,7 @@
                   </div>
 
                   <FormField
+                    v-if="formData['display-target'] !== 'physical-current'"
                     id="displayDisconnectAction"
                     :label="t('apps.display_profile_disconnect')"
                     :hint="t('apps.display_profile_disconnect_desc')"
@@ -548,6 +560,7 @@ const hasForcedDisplayProfile = computed(() => Boolean(formData.value?.['display
 const isNewApp = computed(() => !props.app || props.app.index === -1)
 const displayProfileValid = computed(() => {
   if (!formData.value?.['display-target']) return true
+  if (formData.value['display-target'] === 'physical-current') return true
   if (formData.value['display-resolution-mode'] === 'fixed' && !/^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(formData.value['display-resolution'] || '')) return false
   if (formData.value['display-refresh-rate-mode'] === 'fixed' && !/^[1-9]\d{0,3}(?:\.\d+)?$/.test(formData.value['display-refresh-rate'] || '')) return false
   return true
@@ -823,10 +836,21 @@ const saveApp = async () => {
       'display-disconnect-action',
     ].forEach((key) => delete editedApp[key])
   }
+  if (editedApp['display-target'] === 'physical-current') {
+    ;[
+      'display-device-prep',
+      'display-resolution-mode',
+      'display-resolution',
+      'display-refresh-rate-mode',
+      'display-refresh-rate',
+      'display-vdd-identity',
+      'display-disconnect-action',
+    ].forEach((key) => delete editedApp[key])
+  }
   if (editedApp['display-resolution-mode'] !== 'fixed') delete editedApp['display-resolution']
   if (editedApp['display-refresh-rate-mode'] !== 'fixed') delete editedApp['display-refresh-rate']
   if (editedApp['display-target'] !== 'virtual') delete editedApp['display-vdd-identity']
-  if (editedApp['display-target'] !== 'physical') delete editedApp['display-output-name']
+  if (editedApp['display-target'] !== 'physical' && editedApp['display-target'] !== 'physical-current') delete editedApp['display-output-name']
   if (editedApp['image-path']) {
     editedApp['image-path'] = editedApp['image-path'].toString().replace(/"/g, '')
   }

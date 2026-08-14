@@ -2,6 +2,7 @@
 
 // standard includes
 #include <string>
+#include <string_view>
 
 // local includes
 #include "display_device.h"
@@ -186,6 +187,25 @@ namespace display_device {
     bool user_named_display; /**< The device id above is an existing display the user picked on purpose. */
     parsed_config_t::device_prep_e device_prep; /**< Config value, overridden by the client's custom screen mode. */
   };
+
+  /**
+   * @brief An active physical display together with the mode currently applied by the OS.
+   */
+  struct current_physical_display_t {
+    std::string device_id;
+    std::string display_name;
+    std::string friendly_name;
+    display_mode_t mode;
+  };
+
+  /**
+   * @brief Resolve an active physical display without changing display state.
+   * @param preferred_selector Optional device id, OS display name, or friendly name.
+   * @returns The exact active physical display and current mode. When a selector
+   *          is supplied, failure never falls back to another display.
+   */
+  boost::optional<current_physical_display_t>
+  resolve_current_physical_display(const std::string &preferred_selector = {});
 
   /**
    * @brief Resolve what the launch is aiming at.
