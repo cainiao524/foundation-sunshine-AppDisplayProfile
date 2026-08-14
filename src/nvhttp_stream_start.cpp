@@ -19,6 +19,7 @@
 #include "display_device/parsed_config.h"
 #include "display_device/session.h"
 #include "display_device/vdd_capability.h"
+#include "hdr/session_target.h"
 #include "logging.h"
 #include "video.h"
 
@@ -255,7 +256,7 @@ namespace nvhttp::stream_start {
 
     bool
     retry_deferred_display_config(
-      const rtsp_stream::launch_session_t &launch_session,
+      rtsp_stream::launch_session_t &launch_session,
       bool is_reconfigure,
       display_device::session_t::configure_result_t &display_result,
       auto_recovery_result_t &recovery_result,
@@ -292,6 +293,8 @@ namespace nvhttp::stream_start {
           recovery_result.detail = "Display configuration failed during a deferred retry.";
           return false;
         }
+
+        hdr::adopt_vdd_calibration_if_needed(launch_session);
 
         const auto target = refresh_vdd_probe_target ? make_vdd_probe_target() : probe_target;
         const auto probe_result = video::probe_encoders(target);
@@ -468,9 +471,9 @@ namespace nvhttp::stream_start {
       recovery_session.enable_mic = launch_session.enable_mic;
       recovery_session.use_vdd = true;
       recovery_session.custom_screen_mode = launch_session.custom_screen_mode;
-      recovery_session.max_nits = launch_session.max_nits;
-      recovery_session.min_nits = launch_session.min_nits;
-      recovery_session.max_full_nits = launch_session.max_full_nits;
+      recovery_session.hdr_capabilities = launch_session.hdr_capabilities;
+      recovery_session.reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
+      recovery_session.hdr_target_source = launch_session.hdr_target_source;
       recovery_session.rtsp_url_scheme = launch_session.rtsp_url_scheme;
       recovery_session.rtsp_iv_counter = launch_session.rtsp_iv_counter;
       recovery_session.setup_video = launch_session.setup_video;
@@ -482,10 +485,14 @@ namespace nvhttp::stream_start {
     }
 
     void
-    commit_vdd_recovery_to_launch_session(rtsp_stream::launch_session_t &launch_session) {
+    commit_vdd_recovery_to_launch_session(rtsp_stream::launch_session_t &launch_session,
+      const rtsp_stream::launch_session_t &recovery_session) {
       launch_session.use_vdd = true;
+      launch_session.hdr_capabilities = recovery_session.hdr_capabilities;
+      launch_session.hdr_target_source = recovery_session.hdr_target_source;
       launch_session.env["SUNSHINE_CLIENT_USE_VDD"] = "true";
       launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = config::video.output_name;
+      launch_session.sync_hdr_environment();
     }
 
     /**
@@ -552,7 +559,7 @@ namespace nvhttp::stream_start {
               make_vdd_probe_target(),
               probe_matches_display_state,
               true)) {
-          commit_vdd_recovery_to_launch_session(launch_session);
+          commit_vdd_recovery_to_launch_session(launch_session, recovery_session);
           recovery_result.succeeded = true;
           recovery_result.detail = "A VDD-backed display became available after a short retry and encoder probing succeeded.";
           BOOST_LOG(info) << "Recovered stream startup by preparing a VDD-backed display after a deferred retry";
@@ -583,9 +590,10 @@ namespace nvhttp::stream_start {
         recovery_result.detail = "VDD-backed display recovery was attempted, but the VDD display configuration failed.";
         return false;
       }
+      hdr::adopt_vdd_calibration_if_needed(recovery_session);
 
       if (!video::probe_encoders(make_vdd_probe_target())) {
-        commit_vdd_recovery_to_launch_session(launch_session);
+        commit_vdd_recovery_to_launch_session(launch_session, recovery_session);
         recovery_result.succeeded = true;
         recovery_result.detail = "A VDD-backed display became available and encoder probing succeeded.";
         BOOST_LOG(info) << "Recovered stream startup by preparing a VDD-backed display";
@@ -747,6 +755,9 @@ namespace nvhttp::stream_start {
     // encoders only after the display stack has settled.
     auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
     auto outcome = classify_configure_result(display_result.result);
+    if (display_result) {
+      hdr::adopt_vdd_calibration_if_needed(launch_session);
+    }
     auto_recovery_result_t recovery_result;
     const auto probe_target = make_probe_target(intent);
     bool probe_matches_display_state = false;
