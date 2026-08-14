@@ -159,6 +159,7 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 | 文件 | 职责 |
 | --- | --- |
 | `src_assets/common/assets/web/components/AppEditor.vue` | APP 显示方案表单、默认值、条件显示和提交清理 |
+| `src_assets/common/sunshine-control-panel` | Foundation Desktop 子模块；为内置 Desktop APP 提供常用显示方案入口 |
 | `src_assets/common/assets/web/public/assets/locale/*.json` | APP 显示方案界面翻译 |
 | `src/confighttp.cpp` | 保存 APP 时验证枚举、分辨率、刷新率和条件字段 |
 | `src/process.h`、`src/process.cpp` | 解析 APP 字段，并通过 `apply_app_display_profile()` 覆盖启动会话 |
@@ -170,6 +171,10 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 | `src/rtsp.cpp`、`src/video.*` | 在握手时覆盖串流规格，锁定捕获目标并禁止静默换屏 |
 | `src/stream.cpp` | 动态参数时重新应用或保护 APP 方案，并在最后会话断开时执行恢复策略 |
 | `docs/downstream/app-display-profile.md` | 字段和底层维护要点 |
+
+Foundation Desktop 中的完整编辑器只负责生成同一组 APP 字段，不应在该子模块中复制 Sunshine 的显示器配置、VDD 创建或恢复代码。字段读取、验证和清理集中在子模块的 `src/renderer/desktop/utils/desktopDisplayProfile.js`；`StreamView.vue` 保存前重新获取最新 APP 列表，再通过现有 `/api/apps` 接口修改内置 `Desktop` 项。默认 `Desktop` 不写 `display-target`，以便基地版 Moonlight 的本次连接显示参数继续生效；普通 Moonlight 则回退到全局配置。服务端同时兼容 `customScreenMode` 和旧版电脑版客户端的 `customVddScreenMode`，但后者只决定已确定为 VDD 会话时的布局，不得被用来猜测显示目标。当前 Foundation Moonlight PC 没有发送本次选择的 `useVdd` 或物理显示器编号；在客户端修正前，目标切换必须依赖 APP 强制方案或全局设置。
+
+该目录是独立 Git 子模块。修改 Foundation Desktop 后，必须先把子模块提交推送到用户可控制且能被公开克隆的仓库，再更新外层仓库的子模块指针和必要的 `.gitmodules` 地址。禁止只提交外层 gitlink，导致全新工作区无法获取对应子模块提交。
 
 ### 5.2 启动和恢复顺序
 
@@ -223,7 +228,7 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 4. 正式版仍落后于迁移前基线时，只更新版本记录，不回退，也不启动构建。
 5. 正式版追上后，快进镜像 `master`，合入 `feature/app-display-profile`。
 6. 合并成功后由机器人提交版本记录并推送功能分支。
-7. 仅在真正可用的新正式版合入时调用 Windows 构建工作流。
+7. 新正式版合入后调用 Windows 构建工作流；若上次构建或发布失败且正式发布仍不存在，也会自动补跑。
 8. 任何分叉或代码冲突都会停止任务，不使用强推。
 
 手动 `force-build` 只构建当前功能分支。如果正式版尚未追上迁移前基线，产物使用 `app-display-current-<短提交>`，避免冒充正式版底座。
@@ -245,7 +250,7 @@ gh run list -R cainiao524/foundation-sunshine --limit 10
 - 最终文件重命名后再生成 `SHA256SUMS.txt` 和 `checksums.json`。
 - 上传 GitHub Actions 构建产物。
 
-自动同步触发的手动构建设置 `publish_release=false`，因此不会自动创建 GitHub 正式发布页。
+自动同步会传入独立的 `release-tag` 和 `release-name`。构建、测试、安装版、便携版和校验文件全部成功后，才创建新的 GitHub 正式发布页；已有发布不会更新或覆盖。手动 `force-build` 在已有正式发布时只补充 Actions 产物，不重复发布。
 
 预期附件：
 
@@ -322,10 +327,10 @@ git diff --check
 
 ## 十、发布策略
 
-自动构建和正式发布是两个不同边界：
+用户已经明确授权本项目在同步新正式版后自动发布，因此当前策略为：
 
-- 自动化默认只生成 GitHub Actions 产物。
-- 只有用户明确要求创建正式发布页时，才创建新标签并上传附件。
+- 每个新的上游正式版成功合入后，自动构建并创建一个新的 GitHub 正式发布页。
+- 手动构建默认仍不发布，只有显式传入 `publish-release=true` 才创建发布页。
 - 发布前确认目标标签和发布页不存在。
 - 永不覆盖已有标签或发布。
 - 正式发布应上传安装版、便携版、`SHA256SUMS.txt` 和 `checksums.json`。
@@ -335,7 +340,7 @@ git diff --check
 推荐标签格式：
 
 ```text
-app-display-<上游正式版标签>
+sunshine-funky9-<上游正式版标签去除中文后缀>
 ```
 
 历史发布可能来自迁移到“只跟随正式版”策略之前，不能据此推断后续同步规则。
@@ -370,6 +375,7 @@ app-display-<上游正式版标签>
 - 同日完成 Windows 安装版、便携版、校验文件和 GitHub Actions 云端构建验证。
 - 已有历史发布：`app-display-v2026.813.110311.杂鱼`。它产生于正式版同步策略迁移之前，底座来自当时的上游预发布/开发源码。
 - 2026-08-13 后自动化改为只读取上游 GitHub 的正式发布。
+- 2026-08-14 用户授权新正式版同步成功后自动构建并发布安装版、便携版和校验文件，发布名称使用 `sunshine-funky⑨` 系列。
 - 迁移时记录的正式版基线保存在 `.github/upstream-stable-release`，必须以该文件和 GitHub 当前状态为准。
 
 ## 十三、全新工作区接手清单

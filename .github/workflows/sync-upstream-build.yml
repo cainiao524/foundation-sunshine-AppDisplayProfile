@@ -29,8 +29,12 @@ jobs:
     name: 同步分支
     runs-on: ubuntu-latest
     outputs:
+      build_required: ${{ steps.sync.outputs.build_required }}
       changed: ${{ steps.sync.outputs.changed }}
       build_version: ${{ steps.sync.outputs.build_version }}
+      fork_release_name: ${{ steps.sync.outputs.fork_release_name }}
+      fork_release_tag: ${{ steps.sync.outputs.fork_release_tag }}
+      publish_release: ${{ steps.sync.outputs.publish_release }}
       release_tag: ${{ steps.sync.outputs.release_tag }}
     steps:
       - name: 检出功能分支
@@ -120,8 +124,23 @@ jobs:
             build_version="app-display-current-${after:0:8}"
           fi
 
+          release_base="${release_tag%.杂鱼}"
+          fork_release_tag="sunshine-funky9-${release_base}"
+          fork_release_name="sunshine-funky⑨ ${release_base}"
+          publish_release=false
+          build_required="$changed"
+          if [ "$release_ready" = true ] && ! gh release view "$fork_release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
+            # 新正式版或上次发布失败时都重新构建；已有发布永不覆盖。
+            publish_release=true
+            build_required=true
+          fi
+
+          echo "build_required=$build_required" >> "$GITHUB_OUTPUT"
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
           echo "build_version=$build_version" >> "$GITHUB_OUTPUT"
+          echo "fork_release_name=$fork_release_name" >> "$GITHUB_OUTPUT"
+          echo "fork_release_tag=$fork_release_tag" >> "$GITHUB_OUTPUT"
+          echo "publish_release=$publish_release" >> "$GITHUB_OUTPUT"
           echo "release_tag=$release_tag" >> "$GITHUB_OUTPUT"
           {
             echo '### 同步结果'
@@ -132,13 +151,16 @@ jobs:
             echo "- 产物版本：\`$build_version\`"
             echo "- 是否合入新正式版：\`$changed\`"
             echo "- 是否更新版本记录：\`$state_changed\`"
+            echo "- 是否需要构建：\`$build_required\`"
+            echo "- 是否创建正式发布：\`$publish_release\`"
+            echo "- Fork 发布标签：\`$fork_release_tag\`"
             echo "- 镜像 master 状态：\`$master_status\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
   dispatch-build:
     name: 启动功能版构建
     needs: sync
-    if: needs.sync.outputs.changed == 'true' || inputs['force-build'] == true
+    if: needs.sync.outputs.build_required == 'true' || inputs['force-build'] == true
     runs-on: ubuntu-latest
     steps:
       - name: 启动现有构建工作流
@@ -146,11 +168,17 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           BUILD_VERSION: ${{ needs.sync.outputs.build_version }}
+          FORK_RELEASE_NAME: ${{ needs.sync.outputs.fork_release_name }}
+          FORK_RELEASE_TAG: ${{ needs.sync.outputs.fork_release_tag }}
+          PUBLISH_RELEASE: ${{ needs.sync.outputs.publish_release }}
         run: |
           gh workflow run main.yml \
             --repo "${{ github.repository }}" \
             --ref "${FEATURE_BRANCH}" \
-            -f "build-version=${BUILD_VERSION}"
+            -f "build-version=${BUILD_VERSION}" \
+            -f "publish-release=${PUBLISH_RELEASE}" \
+            -f "release-tag=${FORK_RELEASE_TAG}" \
+            -f "release-name=${FORK_RELEASE_NAME}"
           {
             echo '### 构建已启动'
             echo

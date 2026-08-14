@@ -20,6 +20,22 @@ on:
         description: '用于产物文件名的版本标识；留空时使用手动构建时间'
         required: false
         type: string
+      publish-release:
+        description: '构建成功后创建新的正式发布页'
+        required: false
+        default: false
+        type: boolean
+      release-tag:
+        description: '新发布使用的标签；禁止与现有标签重复'
+        required: false
+        type: string
+      release-name:
+        description: '新发布页面显示的名称'
+        required: false
+        type: string
+
+permissions:
+  contents: write
 
 concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
@@ -40,6 +56,7 @@ jobs:
       release_body: ${{ steps.setup_release_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
       release_commit: ${{ steps.setup_release_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
       release_generate_release_notes: ${{ steps.setup_release_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
+      release_name: ${{ steps.setup_release_manual.outputs.release_name || format('{0}.杂鱼', steps.setup_release_auto.outputs.release_tag) }}
       release_tag: ${{ steps.setup_release_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
       release_version: ${{ steps.setup_release_auto.outputs.release_version || steps.setup_release_manual.outputs.release_version }}
     permissions:
@@ -60,6 +77,9 @@ jobs:
         id: setup_release_manual
         if: github.event_name == 'workflow_dispatch'
         env:
+          PUBLISH_RELEASE: ${{ inputs['publish-release'] }}
+          REQUESTED_NAME: ${{ inputs['release-name'] }}
+          REQUESTED_TAG: ${{ inputs['release-tag'] }}
           REQUESTED_VERSION: ${{ inputs['build-version'] }}
         run: |
           SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
@@ -68,11 +88,14 @@ jobs:
           else
             VERSION="manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}"
           fi
-          echo "publish_release=false" >> $GITHUB_OUTPUT
+          TAG="${REQUESTED_TAG:-$VERSION}"
+          NAME="${REQUESTED_NAME:-$TAG}"
+          echo "publish_release=${PUBLISH_RELEASE}" >> $GITHUB_OUTPUT
           echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
           echo "release_commit=${{ github.sha }}" >> $GITHUB_OUTPUT
           echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=$VERSION" >> $GITHUB_OUTPUT
+          echo "release_name=$NAME" >> $GITHUB_OUTPUT
+          echo "release_tag=$TAG" >> $GITHUB_OUTPUT
           echo "release_version=$VERSION" >> $GITHUB_OUTPUT
 
   vdd_smoke:
@@ -358,10 +381,10 @@ jobs:
         if: needs.setup_release.outputs.publish_release == 'true'
         uses: LizardByte/create-release-action@v2025.426.1549
         with:
-          allowUpdates: true
+          allowUpdates: false
           body: ${{ needs.setup_release.outputs.release_body }}
           generateReleaseNotes: ${{ needs.setup_release.outputs.release_generate_release_notes }}
-          name: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-          prerelease: true
-          tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          name: ${{ needs.setup_release.outputs.release_name }}
+          prerelease: false
+          tag: ${{ needs.setup_release.outputs.release_tag }}
+          token: ${{ secrets.GITHUB_TOKEN }}
