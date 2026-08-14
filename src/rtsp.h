@@ -52,6 +52,7 @@ namespace rtsp_stream {
     bool enable_mic { false };
     bool use_vdd;
     int custom_screen_mode;
+    int custom_vdd_screen_mode {-1};
     int display_target_override {-1};  ///< -1=inherit, 0=physical, 1=virtual
     bool stream_current_physical_mode {false};
     std::string current_physical_display_id;

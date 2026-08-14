@@ -755,6 +755,20 @@ namespace display_device {
     }
   }
 
+  parsed_config_t::vdd_prep_e
+  parsed_config_t::resolve_vdd_prep(int client_mode, device_prep_e unified_fallback) {
+    switch (static_cast<vdd_prep_e>(client_mode)) {
+      case vdd_prep_e::no_operation:
+      case vdd_prep_e::vdd_as_primary:
+      case vdd_prep_e::vdd_as_secondary:
+      case vdd_prep_e::display_off:
+        BOOST_LOG(debug) << "客户端自定义 VDD 屏幕模式: "sv << client_mode;
+        return static_cast<vdd_prep_e>(client_mode);
+      default:
+        return to_vdd_prep(unified_fallback);
+    }
+  }
+
   parsed_config_t::device_prep_e
   parsed_config_t::to_physical_device_prep(device_prep_e unified) {
     switch (unified) {
@@ -808,7 +822,10 @@ namespace display_device {
     // 标记为VDD模式，从统一的 device_prep 映射到内部 vdd_prep
     // device_prep 保留原始统一值（用于 apply_config 中的 display_may_change 等判断）
     parsed_config.use_vdd = true;
-    parsed_config.vdd_prep = parsed_config_t::to_vdd_prep(parsed_config.device_prep);
+    parsed_config.vdd_prep = parsed_config_t::resolve_vdd_prep(
+      session.custom_vdd_screen_mode,
+      parsed_config.device_prep
+    );
     BOOST_LOG(debug) << "VDD模式：统一值 " << static_cast<int>(parsed_config.device_prep)
                      << " 映射为 vdd_prep=" << static_cast<int>(parsed_config.vdd_prep);
 

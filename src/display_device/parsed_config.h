@@ -153,6 +153,14 @@ namespace display_device {
     to_vdd_prep(device_prep_e unified);
 
     /**
+     * @brief 兼容旧版 Foundation Moonlight 独立发送的 VDD 布局值。
+     * @param client_mode 客户端的 customVddScreenMode；-1 或非法值表示未覆盖。
+     * @param unified_fallback 当前统一显示准备值。
+     */
+    static vdd_prep_e
+    resolve_vdd_prep(int client_mode, device_prep_e unified_fallback);
+
+    /**
      * @brief Map unified device_prep_e to internal device_prep_e for physical display mode.
      */
     static device_prep_e

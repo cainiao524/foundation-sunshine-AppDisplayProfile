@@ -87,5 +87,5 @@
 	branch = master
 [submodule "src_assets/common/sunshine-control-panel"]
 	path = src_assets/common/sunshine-control-panel
-	url = https://github.com/qiin2333/sunshine-control-panel.git
-	branch = main
+	url = https://github.com/cainiao524/sunshine-control-panel.git
+	branch = feature/app-display-profile

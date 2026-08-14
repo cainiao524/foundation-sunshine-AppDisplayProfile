@@ -38,6 +38,30 @@
 - 忽略串流中的客户端动态分辨率和帧率变更；不执行断开恢复或取消恢复。
 - 保存配置时清除布局、分辨率、刷新率、VDD 身份和断开恢复字段，只保留目标和可选物理屏编号。
 
+## Foundation Desktop 入口
+
+基地自带的 Foundation Desktop“串流配置”页面为内置 `Desktop` APP 提供完整显示方案编辑：
+
+- 自动适配基地版 Moonlight。这是默认值，不保存 `display-target`，因此基地版客户端的 `useVdd`、`customScreenMode`、`customVddScreenMode` 和显示器名称等本次连接参数仍然有效；普通 Moonlight 没有扩展参数时继续使用全局设置。
+- 原样串流当前物理屏。
+- 强制物理屏或基地虚拟屏，并可分别调整显示布局、分辨率模式、固定分辨率、刷新率模式、固定刷新率、虚拟屏身份、目标物理屏和断开策略。
+- 遇到当前版本不认识的新字段值时保留原始自定义方案，禁止静默降级或覆盖。
+
+这个入口只编辑 `apps.json` 中 `Desktop` APP 的同一组 `display-*` 字段，不另建显示后端。选择“自动适配基地版 Moonlight”时删除这些字段，保持客户端参数和上游全局回退路径。所有强制方案仍由 Sunshine 服务端按 APP 编号应用，因此普通 Moonlight 也可以使用。
+
+Foundation Desktop 保存前必须重新读取最新 APP 列表，只替换当前 `Desktop` 项，避免页面长时间打开后用旧列表覆盖应用管理中的新修改。原有菜单命令、分离启动命令和自动打开 Desktop UI 的行为必须保留。
+
+## Moonlight 系列兼容矩阵
+
+| 客户端 | 显示目标参数 | 布局参数 | 服务端行为 |
+| --- | --- | --- | --- |
+| 标准 Moonlight、VoidLink | 无基地扩展参数 | 无基地扩展参数 | APP 强制方案生效；未配置 APP 时跟随全局设置 |
+| Moonlight V+ | `useVdd` 或 `display_name` | `customScreenMode` | 自动适配和 APP 强制方案均完整支持 |
+| Moonlight macOS Enhanced | `useVdd` 或 `display_name` | `customScreenMode` | 自动适配和 APP 强制方案均完整支持 |
+| Foundation Moonlight PC | 当前版本不发送本次选择的物理屏、VDD 目标 | 同时发送 `customScreenMode` 和 `customVddScreenMode` | 服务端根据实际目标分别使用物理屏或 VDD 布局；显示目标由 APP 强制方案或主机全局设置确定 |
+
+Foundation Moonlight PC 的显示器选择界面目前只修改两套布局偏好，没有把本次选中的显示器编号或 `useVdd` 传入启动请求。两套偏好都设置后，服务端不能从请求中反推出本次点击的是哪一类显示器。因此本 Fork 不猜测目标、不规定含糊参数的优先级；需要由电脑版客户端发送 `useVdd=0/1` 或 `display_name` 后，才能让“自动适配”模式仅凭客户端选择完整切换目标。在客户端完成该修正前，可使用两个按 APP 编号强制指定物理屏和 VDD 的入口，标准 Moonlight 也同样可用。
+
 ## 调用顺序
 
 启动和恢复连接都必须遵守：
@@ -70,6 +94,7 @@
 - `src/rtsp.cpp`、`src/video.*` 的握手模式覆盖、精确捕获目标和禁止显示回退。
 - `src/stream.cpp` 的最后客户端断开和动态分辨率、帧率路径。
 - `AppEditor.vue` 是否仍使用上游表单组件和主题变量。
+- `src_assets/common/sunshine-control-panel` 子模块中的 `StreamView.vue` 和 `desktopDisplayProfile.js` 是否仍复用相同字段，并在保存前读取最新 APP 列表。
 
 ## 已验证范围与项目边界
 

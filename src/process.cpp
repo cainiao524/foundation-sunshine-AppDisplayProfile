@@ -197,6 +197,7 @@ namespace proc {
     _env["SUNSHINE_CLIENT_ENABLE_SOPS"] = launch_session->enable_sops ? "true" : "false";
     _env["SUNSHINE_CLIENT_ENABLE_MIC"] = launch_session->enable_mic ? "true" : "false";
     _env["SUNSHINE_CLIENT_CUSTOM_SCREEN_MODE"] = std::to_string(launch_session->custom_screen_mode);
+    _env["SUNSHINE_CLIENT_CUSTOM_VDD_SCREEN_MODE"] = std::to_string(launch_session->custom_vdd_screen_mode);
     int channelCount = launch_session->surround_info & (65535);
     switch (channelCount) {
       case 2:
@@ -513,6 +514,8 @@ namespace proc {
 
     launch_session.display_target_override = app.display_target;
     launch_session.use_vdd = app.display_target == 1;
+    // 应用显示方案的优先级高于客户端旧版 VDD 布局参数。
+    launch_session.custom_vdd_screen_mode = -1;
     launch_session.stream_current_physical_mode = app.stream_current_physical_mode;
     if (app.display_device_prep >= 0) {
       launch_session.custom_screen_mode = app.display_device_prep;
@@ -555,6 +558,7 @@ namespace proc {
 
     launch_session.env["SUNSHINE_CLIENT_USE_VDD"] = launch_session.use_vdd ? "true" : "false";
     launch_session.env["SUNSHINE_CLIENT_CUSTOM_SCREEN_MODE"] = std::to_string(launch_session.custom_screen_mode);
+    launch_session.env["SUNSHINE_CLIENT_CUSTOM_VDD_SCREEN_MODE"] = std::to_string(launch_session.custom_vdd_screen_mode);
     BOOST_LOG(info) << "Applied app display profile [app=" << app.name
                     << ", target=" << app.display_target
                     << ", current-physical=" << app.stream_current_physical_mode
