@@ -157,30 +157,16 @@ jobs:
             echo "- 镜像 master 状态：\`$master_status\`"
           } >> "$GITHUB_STEP_SUMMARY"
 
-  dispatch-build:
-    name: 启动功能版构建
+  build:
+    name: 构建并验证功能版
     needs: sync
     if: needs.sync.outputs.build_required == 'true' || inputs['force-build'] == true
-    runs-on: ubuntu-latest
-    steps:
-      - name: 启动现有构建工作流
-        shell: bash
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          BUILD_VERSION: ${{ needs.sync.outputs.build_version }}
-          FORK_RELEASE_NAME: ${{ needs.sync.outputs.fork_release_name }}
-          FORK_RELEASE_TAG: ${{ needs.sync.outputs.fork_release_tag }}
-          PUBLISH_RELEASE: ${{ needs.sync.outputs.publish_release }}
-        run: |
-          gh workflow run main.yml \
-            --repo "${{ github.repository }}" \
-            --ref "${FEATURE_BRANCH}" \
-            -f "build-version=${BUILD_VERSION}" \
-            -f "publish-release=${PUBLISH_RELEASE}" \
-            -f "release-tag=${FORK_RELEASE_TAG}" \
-            -f "release-name=${FORK_RELEASE_NAME}"
-          {
-            echo '### 构建已启动'
-            echo
-            echo "构建版本：\`${BUILD_VERSION}\`"
-          } >> "$GITHUB_STEP_SUMMARY"
+    permissions:
+      contents: write
+    uses: ./.github/workflows/main.yml
+    with:
+      build-version: ${{ needs.sync.outputs.build_version }}
+      publish-release: ${{ needs.sync.outputs.publish_release == 'true' }}
+      release-tag: ${{ needs.sync.outputs.fork_release_tag }}
+      release-name: ${{ needs.sync.outputs.fork_release_name }}
+    secrets: inherit

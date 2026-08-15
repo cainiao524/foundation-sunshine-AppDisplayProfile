@@ -14,6 +14,25 @@ on:
   push:
     branches:
       - master
+  workflow_call:
+    inputs:
+      build-version:
+        description: '用于产物文件名的版本标识'
+        required: true
+        type: string
+      publish-release:
+        description: '构建成功后创建新的正式发布页'
+        required: false
+        default: false
+        type: boolean
+      release-tag:
+        description: '新发布使用的标签'
+        required: true
+        type: string
+      release-name:
+        description: '新发布页面显示的名称'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       build-version:
@@ -68,14 +87,14 @@ jobs:
 
       - name: Setup Release (Auto)
         id: setup_release_auto
-        if: github.event_name != 'workflow_dispatch'
+        if: github.event_name != 'workflow_dispatch' && github.event_name != 'workflow_call'
         uses: LizardByte/setup-release-action@v2025.426.225
         with:
           github_token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Setup Release (Manual)
         id: setup_release_manual
-        if: github.event_name == 'workflow_dispatch'
+        if: github.event_name == 'workflow_dispatch' || github.event_name == 'workflow_call'
         env:
           PUBLISH_RELEASE: ${{ inputs['publish-release'] }}
           REQUESTED_NAME: ${{ inputs['release-name'] }}
