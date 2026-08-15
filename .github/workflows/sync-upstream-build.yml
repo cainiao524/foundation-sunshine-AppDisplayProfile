@@ -127,13 +127,9 @@ jobs:
           release_base="${release_tag%.杂鱼}"
           fork_release_tag="sunshine-funky9-${release_base}"
           fork_release_name="sunshine-funky⑨ ${release_base}"
-          publish_release=false
           build_required="$changed"
-          if [ "$release_ready" = true ] && ! gh release view "$fork_release_tag" --repo "$GITHUB_REPOSITORY" >/dev/null 2>&1; then
-            # 新正式版或上次发布失败时都重新构建；已有发布永不覆盖。
-            publish_release=true
-            build_required=true
-          fi
+          # 自动同步只生成 Actions 产物。正式发布必须由用户另行授权。
+          publish_release=false
 
           echo "build_required=$build_required" >> "$GITHUB_OUTPUT"
           echo "changed=$changed" >> "$GITHUB_OUTPUT"
