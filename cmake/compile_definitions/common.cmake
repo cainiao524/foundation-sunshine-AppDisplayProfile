@@ -65,7 +65,6 @@ set(SUNSHINE_TARGET_FILES
         "${CMAKE_SOURCE_DIR}/src/hdr/session_target.cpp"
         "${CMAKE_SOURCE_DIR}/src/hdr/session_target.h"
         "${CMAKE_SOURCE_DIR}/src/display_device/display_device.h"
-        "${CMAKE_SOURCE_DIR}/src/display_device/current_physical_display.h"
         "${CMAKE_SOURCE_DIR}/src/display_device/color_profile.cpp"
         "${CMAKE_SOURCE_DIR}/src/display_device/color_profile.h"
         "${CMAKE_SOURCE_DIR}/src/display_device/parsed_config.cpp"

@@ -21,18 +21,6 @@ export function normalizeAppDisplayProfile(app) {
     return normalized
   }
 
-  if (normalized['display-target'] === 'physical-current') {
-    for (const key of [
-      'display-device-prep',
-      'display-resolution-mode',
-      'display-resolution',
-      'display-refresh-rate-mode',
-      'display-refresh-rate',
-      'display-disconnect-action',
-    ]) delete normalized[key]
-    return normalized
-  }
-
   if (!['', 'client', 'fixed'].includes(normalized['display-resolution-mode'])) {
     normalized['display-resolution-mode'] = ''
   }

@@ -14,7 +14,6 @@ extern "C" {
 #include <algorithm>
 #include <array>
 #include <cctype>
-#include <cmath>
 #include <cstring>
 #include <set>
 #include <unordered_map>
@@ -29,7 +28,6 @@ extern "C" {
 #include "clipboard_bridge.h"
 #include "config.h"
 #include "cursor_channel.h"
-#include "display_device/parsed_config.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
@@ -1543,52 +1541,6 @@ namespace rtsp_stream {
     catch (std::out_of_range &) {
       respond(sock, session, &option, 400, "BAD REQUEST", req->sequenceNumber, {});
       return;
-    }
-
-    if (session.stream_current_physical_mode) {
-      std::string selector = session.current_physical_display_id;
-      if (selector.empty()) {
-        if (const auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
-          selector = it->to_string();
-        }
-      }
-
-      const auto physical_display = display_device::resolve_current_physical_display(selector);
-      if (!physical_display) {
-        BOOST_LOG(error) << "The unchanged physical-display stream cannot start because its physical display is unavailable."sv;
-        respond(sock, session, &option, 503, "SERVICE UNAVAILABLE", req->sequenceNumber, {});
-        return;
-      }
-
-      const auto &mode = physical_display->mode;
-      auto &monitor = config.monitor;
-      session.current_physical_display_id = physical_display->device_id;
-      session.current_physical_width = mode.resolution.width;
-      session.current_physical_height = mode.resolution.height;
-      session.current_physical_refresh_numerator = mode.refresh_rate.numerator;
-      session.current_physical_refresh_denominator = mode.refresh_rate.denominator;
-      session.width = static_cast<int>(mode.resolution.width);
-      session.height = static_cast<int>(mode.resolution.height);
-      session.fps = std::max(1, static_cast<int>(std::lround(
-        static_cast<double>(mode.refresh_rate.numerator) / mode.refresh_rate.denominator)));
-
-      monitor.width = session.width;
-      monitor.height = session.height;
-      monitor.framerate = session.fps;
-      monitor.frameRateNum = static_cast<int>(mode.refresh_rate.numerator);
-      monitor.frameRateDen = static_cast<int>(mode.refresh_rate.denominator);
-      monitor.display_name = physical_display->device_id;
-      monitor.strict_display_target = true;
-#ifdef _WIN32
-      if (config::video.capture == "vdd"sv) {
-        monitor.capture_backend_override = "ddx";
-      }
-#endif
-
-      BOOST_LOG(info) << "Overriding the client stream mode with the current physical display [device="
-                      << physical_display->device_id << ", mode=" << monitor.width << 'x'
-                      << monitor.height << '@' << monitor.frameRateNum << '/'
-                      << monitor.frameRateDen << "]";
     }
 
     // When using stereo audio, the audio quality is (strangely) indicated by whether the Host field

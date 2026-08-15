@@ -873,23 +873,10 @@ namespace confighttp {
           }
           return true;
         }
-        if (*target != "virtual"sv && *target != "physical"sv && *target != "physical-current"sv) {
+        if (*target != "virtual"sv && *target != "physical"sv) {
           outputTree.put("status", "false");
           outputTree.put("error", "Invalid per-app display target");
           return false;
-        }
-
-        if (*target == "physical-current"sv) {
-          // The host's active physical mode is authoritative. Strip every
-          // option that could configure or restore a display; retain only an
-          // optional exact physical-display selector.
-          for (const auto *key : {
-                 "display-device-prep", "display-resolution-mode", "display-resolution",
-                 "display-refresh-rate-mode", "display-refresh-rate",
-                 "display-disconnect-action"}) {
-            app_node.erase(key);
-          }
-          return true;
         }
 
         const auto one_of = [](const std::string &value, std::initializer_list<std::string_view> values) {

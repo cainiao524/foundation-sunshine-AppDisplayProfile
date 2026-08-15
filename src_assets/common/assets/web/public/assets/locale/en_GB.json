@@ -103,8 +103,6 @@
     "display_profile_output_name_desc": "Leave blank to use the configured or primary physical display, or enter a Sunshine display device ID.",
     "display_profile_output_name_placeholder": "Leave blank for the configured physical display",
     "display_profile_physical": "Force a physical display",
-    "display_profile_physical_current": "Stream the current physical display unchanged",
-    "display_profile_physical_current_desc": "Sunshine will capture the active physical display at its current resolution and refresh rate. It ignores the Moonlight resolution and FPS for the stream, does not change or restore host display settings, and never creates or falls back to a virtual display.",
     "display_profile_policy": "Display control",
     "display_profile_policy_desc": "Follow the host configuration, or bind a server-side display profile to this application for every Moonlight client.",
     "display_profile_primary": "Set as the primary display",

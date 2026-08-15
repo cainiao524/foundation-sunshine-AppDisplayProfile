@@ -65,19 +65,6 @@ if (WIN32)
 endif ()
 add_test(NAME video_probe_unit_tests COMMAND video_probe_unit_tests)
 
-add_executable(current_physical_display_unit_tests
-        ${CMAKE_SOURCE_DIR}/tests/unit/test_current_physical_display.cpp)
-target_include_directories(current_physical_display_unit_tests PRIVATE "${CMAKE_SOURCE_DIR}")
-target_link_libraries(current_physical_display_unit_tests
-        Boost::optional
-        gtest_main)
-target_compile_options(current_physical_display_unit_tests PRIVATE $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
-set_target_properties(current_physical_display_unit_tests PROPERTIES CXX_STANDARD 23)
-if (WIN32)
-    set_target_properties(current_physical_display_unit_tests PROPERTIES LINK_SEARCH_START_STATIC 1)
-endif ()
-add_test(NAME current_physical_display_unit_tests COMMAND current_physical_display_unit_tests)
-
 if (WIN32)
     add_executable(vdd_prerequisite_unit_tests
             ${CMAKE_SOURCE_DIR}/tests/unit/test_vdd_prerequisite.cpp)

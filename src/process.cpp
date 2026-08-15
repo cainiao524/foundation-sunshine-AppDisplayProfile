@@ -512,7 +512,6 @@ namespace proc {
     launch_session.use_vdd = app.display_target == 1;
     // 应用显示方案的优先级高于客户端旧版 VDD 布局参数。
     launch_session.custom_vdd_screen_mode = -1;
-    launch_session.stream_current_physical_mode = app.stream_current_physical_mode;
     launch_session.custom_screen_mode = app.display_device_prep >= 0 ?
                                           app.display_device_prep :
                                           static_cast<int>(display_device::parsed_config_t::device_prep_e::ensure_active);
@@ -524,20 +523,7 @@ namespace proc {
       launch_session.refresh_rate_change_override = app.display_refresh_rate_mode;
       launch_session.manual_refresh_rate_override = app.display_refresh_rate;
     }
-    if (!app.stream_current_physical_mode) {
-      launch_session.restore_display_on_disconnect = app.restore_display_on_disconnect;
-    }
-    else {
-      // This mode is intentionally stronger than every global or hand-edited
-      // per-app display option: it must never configure or later restore a display.
-      launch_session.use_vdd = false;
-      launch_session.custom_screen_mode = static_cast<int>(display_device::parsed_config_t::device_prep_e::no_operation);
-      launch_session.resolution_change_override = static_cast<int>(display_device::parsed_config_t::resolution_change_e::no_operation);
-      launch_session.refresh_rate_change_override = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::no_operation);
-      launch_session.manual_resolution_override.clear();
-      launch_session.manual_refresh_rate_override.clear();
-      launch_session.restore_display_on_disconnect = false;
-    }
+    launch_session.restore_display_on_disconnect = app.restore_display_on_disconnect;
 
     if (app.display_target == 0) {
       if (!app.display_output_name.empty()) {
@@ -556,7 +542,6 @@ namespace proc {
     launch_session.env["SUNSHINE_CLIENT_CUSTOM_VDD_SCREEN_MODE"] = std::to_string(launch_session.custom_vdd_screen_mode);
     BOOST_LOG(info) << "Applied app display profile [app=" << app.name
                     << ", target=" << app.display_target
-                    << ", current-physical=" << app.stream_current_physical_mode
                     << ", prep=" << launch_session.custom_screen_mode << ']';
     return true;
   }
@@ -989,10 +974,6 @@ namespace proc {
         ctx.mouse_mode = mouse_mode.value_or(0);
         if (display_target && *display_target == "physical"sv) {
           ctx.display_target = 0;
-        }
-        else if (display_target && *display_target == "physical-current"sv) {
-          ctx.display_target = 0;
-          ctx.stream_current_physical_mode = true;
         }
         else if (display_target && *display_target == "virtual"sv) {
           ctx.display_target = 1;

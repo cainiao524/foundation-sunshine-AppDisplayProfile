@@ -67,7 +67,7 @@ const displayDevices = computed(() => {
 });
 
 const selectedPhysicalDevice = computed(() => {
-  if (!isAppContext.value || !outputName.value || ['__inherit__', '__physical_current__', '__physical__', 'ZakoHDR'].includes(outputName.value)) {
+  if (!isAppContext.value || !outputName.value || ['__inherit__', '__physical__', 'ZakoHDR'].includes(outputName.value)) {
     return null;
   }
   return displayDevices.value.some((device) => device.id === outputName.value)
@@ -84,7 +84,6 @@ const selectedPhysicalDevice = computed(() => {
     <select :id="isAppContext ? 'app_output_name' : 'output_name'" class="form-select" v-model="outputName">
       <template v-if="isAppContext">
         <option value="__inherit__">{{ $t("apps.display_profile_inherit") }}</option>
-        <option value="__physical_current__">{{ $t("apps.display_profile_physical_current") }}</option>
         <option v-if="outputName === '__physical__'" value="__physical__">
           {{ $t("apps.display_profile_physical") }}
         </option>

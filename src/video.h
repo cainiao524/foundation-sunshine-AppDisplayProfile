@@ -124,10 +124,6 @@ namespace video {
     // If empty, use the default display from global configuration
     std::string display_name;
 
-    // Fail the session if display_name cannot be captured instead of silently
-    // selecting another display.
-    bool strict_display_target {false};
-
     // Optional per-display initialization capture backend override.
     // This is intentionally scoped to a single platf::display() call so encoder
     // probing can avoid mutating the global config::video.capture string.

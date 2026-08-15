@@ -103,8 +103,6 @@
     "display_profile_output_name_desc": "留空时使用全局配置或主显示器，也可以填写 Sunshine 显示设备编号。",
     "display_profile_output_name_placeholder": "留空以使用已配置的物理显示器",
     "display_profile_physical": "强制使用物理显示器",
-    "display_profile_physical_current": "原样串流当前物理显示器",
-    "display_profile_physical_current_desc": "Sunshine 会按物理显示器当前的分辨率和刷新率直接捕获。串流时忽略 Moonlight 请求的分辨率与帧率，不更改也不恢复主机显示设置，并且绝不创建或回退到虚拟显示器。",
     "display_profile_policy": "显示控制",
     "display_profile_policy_desc": "可以跟随主机全局配置，也可以为所有 Moonlight 客户端绑定一份服务端显示方案。",
     "display_profile_primary": "设置为主显示器",

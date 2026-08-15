@@ -98,26 +98,4 @@ namespace {
     EXPECT_EQ(session.env["SUNSHINE_CLIENT_DISPLAY_NAME"].to_string(), "configured-physical-display");
   }
 
-  TEST(AppDisplayProfile, CurrentPhysicalTargetDoesNotConfigureModeOrVirtualDisplay) {
-    auto app = make_app(0, static_cast<int>(device_prep_e::ensure_only_display));
-    app.stream_current_physical_mode = true;
-    app.display_resolution_mode = static_cast<int>(resolution_change_e::manual);
-    app.display_resolution = "2560x1440";
-    app.display_refresh_rate_mode = static_cast<int>(refresh_rate_change_e::manual);
-    app.display_refresh_rate = "120";
-    auto processor = make_processor(std::move(app));
-    rtsp_stream::launch_session_t session {};
-    session.use_vdd = true;
-    session.custom_vdd_screen_mode = 2;
-
-    ASSERT_TRUE(processor.apply_app_display_profile(42, session));
-    EXPECT_TRUE(session.stream_current_physical_mode);
-    EXPECT_FALSE(session.use_vdd);
-    EXPECT_EQ(session.custom_screen_mode, static_cast<int>(device_prep_e::no_operation));
-    EXPECT_EQ(session.custom_vdd_screen_mode, -1);
-    EXPECT_EQ(session.resolution_change_override, static_cast<int>(resolution_change_e::no_operation));
-    EXPECT_EQ(session.refresh_rate_change_override, static_cast<int>(refresh_rate_change_e::no_operation));
-    EXPECT_TRUE(session.manual_resolution_override.empty());
-    EXPECT_TRUE(session.manual_refresh_rate_override.empty());
-  }
 }  // namespace

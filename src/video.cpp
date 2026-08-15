@@ -1747,11 +1747,6 @@ namespace video {
         }
       }
       if (!found) {
-        if (config.strict_display_target) {
-          BOOST_LOG(error) << "Required display [" << config.display_name << "] (resolved: "
-                           << resolved_display_name << ") is unavailable; refusing display fallback";
-          return;
-        }
         BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
         target_display_name = display_names[display_p];
       }

@@ -28,25 +28,6 @@ test('无操作显示布局能够原样保存', () => {
   assert.equal(normalized['display-target'], 'virtual')
 })
 
-test('原样物理屏只保留目标和指定显示器', () => {
-  const normalized = normalizeAppDisplayProfile({
-    name: 'Desktop',
-    'display-target': 'physical-current',
-    'display-output-name': '\\\\.\\DISPLAY2',
-    'display-device-prep': 'ensure_only_display',
-    'display-resolution-mode': 'fixed',
-    'display-resolution': '1920x1080',
-    'display-refresh-rate-mode': 'fixed',
-    'display-refresh-rate': '60',
-    'display-disconnect-action': 'restore',
-  })
-
-  assert.deepEqual(normalized, {
-    name: 'Desktop',
-    'display-target': 'physical-current',
-    'display-output-name': '\\\\.\\DISPLAY2',
-  })
-})
 
 test('应用编辑器直接复用主设置显示准备组件', async () => {
   const source = await readFile(new URL('../components/AppEditor.vue', import.meta.url), 'utf8')

@@ -164,17 +164,9 @@
                     {{ t('apps.display_profile_exclusive_warning') }}
                   </div>
 
-                  <div v-if="formData['display-target'] === 'physical-current'" class="alert alert-info display-profile-alert" role="alert">
-                    <i class="fas fa-circle-info me-2"></i>
-                    {{ t('apps.display_profile_physical_current_desc') }}
-                  </div>
+                  <DisplayPreparationPicker v-model="formData['display-device-prep']" />
 
-                  <DisplayPreparationPicker
-                    v-if="formData['display-target'] !== 'physical-current'"
-                    v-model="formData['display-device-prep']"
-                  />
-
-                  <details v-if="formData['display-target'] !== 'physical-current'" class="display-options-note">
+                  <details class="display-options-note">
                     <summary>
                       <i class="fas fa-circle-info" aria-hidden="true"></i>
                       {{ tp('config.display_device_options_note') }}
@@ -182,7 +174,7 @@
                     <p class="pre-line">{{ tp('config.display_device_options_note_desc') }}</p>
                   </details>
 
-                  <div v-if="formData['display-target'] !== 'physical-current'" class="display-rule-grid">
+                  <div class="display-rule-grid">
                     <DisplayRuleRadioGroup
                       v-model="appResolutionRule"
                       name="app_resolution_change"
@@ -499,16 +491,12 @@ const appDisplayOutput = computed({
   get: () => {
     const target = formData.value?.['display-target']
     if (!target) return '__inherit__'
-    if (target === 'physical-current') return '__physical_current__'
     if (target === 'virtual') return 'ZakoHDR'
     return formData.value?.['display-output-name'] || '__physical__'
   },
   set: (outputName) => {
     if (outputName === '__inherit__') {
       formData.value['display-target'] = ''
-      formData.value['display-output-name'] = ''
-    } else if (outputName === '__physical_current__') {
-      formData.value['display-target'] = 'physical-current'
       formData.value['display-output-name'] = ''
     } else if (outputName === 'ZakoHDR') {
       formData.value['display-target'] = 'virtual'
@@ -539,7 +527,6 @@ const appRefreshRateRule = computed({
 const isNewApp = computed(() => !props.app || props.app.index === -1)
 const displayProfileValid = computed(() => {
   if (!formData.value?.['display-target']) return true
-  if (formData.value['display-target'] === 'physical-current') return true
   if (formData.value['display-resolution-mode'] === 'fixed' && !/^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(formData.value['display-resolution'] || '')) return false
   if (formData.value['display-refresh-rate-mode'] === 'fixed' && !/^[1-9]\d{0,3}(?:\.\d+)?$/.test(formData.value['display-refresh-rate'] || '')) return false
   return true
