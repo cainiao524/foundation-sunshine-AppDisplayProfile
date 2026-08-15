@@ -76,6 +76,8 @@ namespace proc {
     int display_resolution_mode {-1};  ///< -1=inherit, 0=no operation, 1=client, 2=fixed
     int display_refresh_rate_mode {-1};  ///< -1=inherit, 0=no operation, 1=client, 2=fixed
     int display_dynamic_resolution_follow_display {-1};  ///< -1=inherit, 0=disabled, 1=enabled
+    int display_hdr_policy {-1};  ///< -1=inherit, 0=ignore client, 1=respond to client, 2=forced
+    int display_hdr_state {-1};  ///< -1=unset, 0=disabled, 1=enabled
     std::string display_resolution;
     std::string display_refresh_rate;
     std::string display_output_name;

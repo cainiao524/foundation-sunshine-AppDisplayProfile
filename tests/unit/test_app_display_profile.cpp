@@ -117,4 +117,30 @@ namespace {
     EXPECT_EQ(session.dynamic_resolution_follow_display_override, 0);
   }
 
+  TEST(AppDisplayProfile, ForcedHdrStateOverridesClientRequest) {
+    auto app = make_app(1, static_cast<int>(device_prep_e::ensure_active));
+    app.display_hdr_policy = 2;
+    app.display_hdr_state = 1;
+    auto processor = make_processor(std::move(app));
+    rtsp_stream::launch_session_t session {};
+    session.enable_hdr = false;
+
+    ASSERT_TRUE(processor.apply_app_display_profile(42, session));
+    EXPECT_EQ(session.hdr_policy_override, 2);
+    EXPECT_EQ(session.hdr_state_override, 1);
+    EXPECT_TRUE(session.enable_hdr);
+  }
+
+  TEST(AppDisplayProfile, IgnoreClientHdrPolicyDoesNotChangeSessionRequest) {
+    auto app = make_app(1, static_cast<int>(device_prep_e::ensure_active));
+    app.display_hdr_policy = 0;
+    auto processor = make_processor(std::move(app));
+    rtsp_stream::launch_session_t session {};
+    session.enable_hdr = true;
+
+    ASSERT_TRUE(processor.apply_app_display_profile(42, session));
+    EXPECT_EQ(session.hdr_policy_override, 0);
+    EXPECT_TRUE(session.enable_hdr);
+  }
+
 }  // namespace

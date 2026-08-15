@@ -485,6 +485,12 @@ namespace display_device {
      */
     boost::optional<bool>
     parse_hdr_option(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+      if (session.hdr_policy_override == 0) {
+        return boost::none;
+      }
+      if (session.hdr_policy_override == 2 && session.hdr_state_override >= 0) {
+        return session.hdr_state_override != 0;
+      }
       const auto hdr_prep_option { static_cast<parsed_config_t::hdr_prep_e>(config.hdr_prep) };
       switch (hdr_prep_option) {
         case parsed_config_t::hdr_prep_e::automatic:

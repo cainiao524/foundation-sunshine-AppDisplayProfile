@@ -242,6 +242,27 @@
                     >
                       <div class="form-text">{{ t('apps.display_profile_disconnect_desc') }}</div>
                     </DisplayRuleRadioGroup>
+
+                    <DisplayRuleRadioGroup
+                      v-model="appHdrPolicy"
+                      name="app_hdr_policy"
+                      label-key="apps.display_profile_hdr"
+                      option-key-prefix="apps.display_profile_hdr_"
+                      :options="['inherit', 'ignore_client', 'client', 'forced']"
+                      :platform-aware="false"
+                    >
+                      <div class="form-text">{{ t('apps.display_profile_hdr_desc') }}</div>
+                      <div class="nested-setting mt-2" v-if="appHdrPolicy === 'forced'">
+                        <DisplayRuleRadioGroup
+                          v-model="appHdrState"
+                          name="app_hdr_state"
+                          label-key="apps.display_profile_hdr_state"
+                          option-key-prefix="apps.display_profile_hdr_state_"
+                          :options="['enabled', 'disabled']"
+                          :platform-aware="false"
+                        />
+                      </div>
+                    </DisplayRuleRadioGroup>
                   </div>
                 </template>
               </AccordionItem>
@@ -460,6 +481,8 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'display-refresh-rate-mode': '',
   'display-refresh-rate': '',
   'display-dynamic-resolution-follow-display': '',
+  'display-hdr-policy': '',
+  'display-hdr-state': '',
   'display-output-name': '',
   'display-disconnect-action': 'keep',
 })
@@ -567,6 +590,19 @@ const appDynamicResolutionRule = computed({
   get: () => formData.value?.['display-dynamic-resolution-follow-display'] || 'inherit',
   set: (mode) => {
     formData.value['display-dynamic-resolution-follow-display'] = mode === 'enabled' || mode === 'disabled' ? mode : ''
+  },
+})
+const appHdrPolicy = computed({
+  get: () => formData.value?.['display-hdr-policy'] || 'inherit',
+  set: (mode) => {
+    formData.value['display-hdr-policy'] = mode === 'ignore_client' || mode === 'client' || mode === 'forced' ? mode : ''
+    if (mode !== 'forced') formData.value['display-hdr-state'] = ''
+  },
+})
+const appHdrState = computed({
+  get: () => formData.value?.['display-hdr-state'] || 'enabled',
+  set: (mode) => {
+    formData.value['display-hdr-state'] = mode === 'disabled' ? 'disabled' : 'enabled'
   },
 })
 const isNewApp = computed(() => !props.app || props.app.index === -1)

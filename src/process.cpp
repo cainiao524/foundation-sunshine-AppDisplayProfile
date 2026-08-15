@@ -515,6 +515,11 @@ namespace proc {
     launch_session.custom_screen_mode = app.display_device_prep >= 0 ?
                                           app.display_device_prep :
                                           static_cast<int>(display_device::parsed_config_t::device_prep_e::ensure_active);
+    launch_session.hdr_policy_override = app.display_hdr_policy;
+    launch_session.hdr_state_override = app.display_hdr_state;
+    if (app.display_hdr_policy == 2 && app.display_hdr_state >= 0) {
+      launch_session.enable_hdr = app.display_hdr_state != 0;
+    }
     if (app.display_resolution_mode >= 0) {
       launch_session.resolution_change_override = app.display_resolution_mode;
       launch_session.manual_resolution_override = app.display_resolution;
@@ -893,6 +898,8 @@ namespace proc {
         auto display_refresh_rate_mode = app_node.get_optional<std::string>("display-refresh-rate-mode"s);
         auto display_refresh_rate = app_node.get_optional<std::string>("display-refresh-rate"s);
         auto display_dynamic_resolution = app_node.get_optional<std::string>("display-dynamic-resolution-follow-display"s);
+        auto display_hdr_policy = app_node.get_optional<std::string>("display-hdr-policy"s);
+        auto display_hdr_state = app_node.get_optional<std::string>("display-hdr-state"s);
         auto disconnect_action = app_node.get_optional<std::string>("display-disconnect-action"s);
         auto display_output_name = app_node.get_optional<std::string>("display-output-name"s);
 
@@ -1010,6 +1017,21 @@ namespace proc {
         }
         else if (display_dynamic_resolution && *display_dynamic_resolution == "disabled"sv) {
           ctx.display_dynamic_resolution_follow_display = 0;
+        }
+        if (display_hdr_policy && *display_hdr_policy == "ignore_client"sv) {
+          ctx.display_hdr_policy = 0;
+        }
+        else if (display_hdr_policy && *display_hdr_policy == "client"sv) {
+          ctx.display_hdr_policy = 1;
+        }
+        else if (display_hdr_policy && *display_hdr_policy == "forced"sv) {
+          ctx.display_hdr_policy = 2;
+          if (display_hdr_state && *display_hdr_state == "enabled"sv) {
+            ctx.display_hdr_state = 1;
+          }
+          else if (display_hdr_state && *display_hdr_state == "disabled"sv) {
+            ctx.display_hdr_state = 0;
+          }
         }
         ctx.restore_display_on_disconnect = disconnect_action && *disconnect_action == "restore"sv;
         ctx.display_output_name = display_output_name.value_or("");

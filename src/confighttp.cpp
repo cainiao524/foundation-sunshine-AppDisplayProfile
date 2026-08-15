@@ -851,6 +851,8 @@ namespace confighttp {
           "display-refresh-rate-mode",
           "display-refresh-rate",
           "display-dynamic-resolution-follow-display",
+          "display-hdr-policy",
+          "display-hdr-state",
           "display-output-name",
           "display-disconnect-action",
         };
@@ -870,6 +872,7 @@ namespace confighttp {
                  "display-target", "display-device-prep", "display-resolution-mode", "display-resolution",
                  "display-refresh-rate-mode", "display-refresh-rate",
                  "display-dynamic-resolution-follow-display",
+                 "display-hdr-policy", "display-hdr-state",
                  "display-output-name", "display-disconnect-action"}) {
             app_node.erase(key);
           }
@@ -894,10 +897,14 @@ namespace confighttp {
         const auto resolution_mode = app_node.get<std::string>("display-resolution-mode", "");
         const auto refresh_mode = app_node.get<std::string>("display-refresh-rate-mode", "");
         const auto dynamic_resolution = app_node.get<std::string>("display-dynamic-resolution-follow-display", "");
+        const auto hdr_policy = app_node.get<std::string>("display-hdr-policy", "");
+        const auto hdr_state = app_node.get<std::string>("display-hdr-state", "");
         const auto disconnect = app_node.get<std::string>("display-disconnect-action", "keep");
         if ((!resolution_mode.empty() && !one_of(resolution_mode, {"no_operation"sv, "client"sv, "fixed"sv})) ||
             (!refresh_mode.empty() && !one_of(refresh_mode, {"no_operation"sv, "client"sv, "fixed"sv})) ||
             (!dynamic_resolution.empty() && !one_of(dynamic_resolution, {"enabled"sv, "disabled"sv})) ||
+            (!hdr_policy.empty() && !one_of(hdr_policy, {"ignore_client"sv, "client"sv, "forced"sv})) ||
+            (!hdr_state.empty() && !one_of(hdr_state, {"enabled"sv, "disabled"sv})) ||
             !one_of(disconnect, {"keep"sv, "restore"sv})) {
           outputTree.put("status", "false");
           outputTree.put("error", "Invalid per-app display profile option");
@@ -915,6 +922,7 @@ namespace confighttp {
 
         if (resolution_mode != "fixed"sv) app_node.erase("display-resolution");
         if (refresh_mode != "fixed"sv) app_node.erase("display-refresh-rate");
+        if (hdr_policy != "forced"sv) app_node.erase("display-hdr-state");
         if (*target != "physical"sv) app_node.erase("display-output-name");
         return true;
       };

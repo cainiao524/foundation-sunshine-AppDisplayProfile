@@ -6,6 +6,8 @@ const DISPLAY_PROFILE_FIELDS = new Set([
   'display-refresh-rate-mode',
   'display-refresh-rate',
   'display-dynamic-resolution-follow-display',
+  'display-hdr-policy',
+  'display-hdr-state',
   'display-output-name',
   'display-disconnect-action',
 ])
@@ -32,6 +34,13 @@ export function normalizeAppDisplayProfile(app) {
   if (normalized['display-refresh-rate-mode'] !== 'fixed') delete normalized['display-refresh-rate']
   if (!['enabled', 'disabled'].includes(normalized['display-dynamic-resolution-follow-display'])) {
     delete normalized['display-dynamic-resolution-follow-display']
+  }
+  if (!['', 'ignore_client', 'client', 'forced'].includes(normalized['display-hdr-policy'])) {
+    normalized['display-hdr-policy'] = ''
+  }
+  if (normalized['display-hdr-policy'] !== 'forced' ||
+      !['enabled', 'disabled'].includes(normalized['display-hdr-state'])) {
+    delete normalized['display-hdr-state']
   }
   if (normalized['display-target'] !== 'physical') delete normalized['display-output-name']
   return normalized

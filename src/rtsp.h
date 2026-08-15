@@ -58,6 +58,8 @@ namespace rtsp_stream {
     int resolution_change_override {-1};
     int refresh_rate_change_override {-1};
     int dynamic_resolution_follow_display_override {-1};
+    int hdr_policy_override {-1};  ///< -1=inherit, 0=ignore client, 1=client, 2=forced
+    int hdr_state_override {-1};  ///< -1=unset, 0=disabled, 1=enabled
     std::string manual_resolution_override;
     std::string manual_refresh_rate_override;
     bool restore_display_on_disconnect {false};
