@@ -551,6 +551,7 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
+    int dynamic_resolution_follow_display_override,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events = std::nullopt);
 
   bool

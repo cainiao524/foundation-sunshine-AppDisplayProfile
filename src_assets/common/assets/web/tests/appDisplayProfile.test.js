@@ -45,15 +45,17 @@ test('应用编辑器直接复用主设置显示准备组件', async () => {
   assert.doesNotMatch(source, /id="displayRefreshRateMode"/)
 })
 
-test('应用分辨率和刷新率规则只保留既有字段值', () => {
+test('应用能够保存不更改分辨率和刷新率以及动态分辨率覆盖', () => {
   const normalized = normalizeAppDisplayProfile({
     name: 'Desktop',
     'display-target': 'virtual',
     'display-device-prep': 'ensure_active',
     'display-resolution-mode': 'no_operation',
     'display-refresh-rate-mode': 'no_operation',
+    'display-dynamic-resolution-follow-display': 'disabled',
   })
 
-  assert.equal(normalized['display-resolution-mode'], '')
-  assert.equal(normalized['display-refresh-rate-mode'], '')
+  assert.equal(normalized['display-resolution-mode'], 'no_operation')
+  assert.equal(normalized['display-refresh-rate-mode'], 'no_operation')
+  assert.equal(normalized['display-dynamic-resolution-follow-display'], 'disabled')
 })

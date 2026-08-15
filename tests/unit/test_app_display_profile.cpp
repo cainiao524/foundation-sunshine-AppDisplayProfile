@@ -35,12 +35,14 @@ namespace {
     session.use_vdd = true;
     session.custom_screen_mode = static_cast<int>(device_prep_e::ensure_primary);
     session.custom_vdd_screen_mode = 2;
+    session.dynamic_resolution_follow_display_override = 1;
     session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = "client-display";
 
     ASSERT_TRUE(processor.apply_app_display_profile(42, session));
     EXPECT_TRUE(session.use_vdd);
     EXPECT_EQ(session.custom_screen_mode, static_cast<int>(device_prep_e::ensure_primary));
     EXPECT_EQ(session.custom_vdd_screen_mode, 2);
+    EXPECT_EQ(session.dynamic_resolution_follow_display_override, 1);
     EXPECT_EQ(session.env["SUNSHINE_CLIENT_DISPLAY_NAME"].to_string(), "client-display");
     EXPECT_EQ(session.display_target_override, -1);
   }
@@ -96,6 +98,23 @@ namespace {
     EXPECT_EQ(session.custom_screen_mode, static_cast<int>(device_prep_e::ensure_primary));
     EXPECT_EQ(session.custom_vdd_screen_mode, -1);
     EXPECT_EQ(session.env["SUNSHINE_CLIENT_DISPLAY_NAME"].to_string(), "configured-physical-display");
+  }
+
+  TEST(AppDisplayProfile, DisplayModeAndDynamicResolutionOverridesUseBaseEnums) {
+    auto app = make_app(1, static_cast<int>(device_prep_e::ensure_active));
+    app.display_resolution_mode = static_cast<int>(resolution_change_e::no_operation);
+    app.display_refresh_rate_mode = static_cast<int>(refresh_rate_change_e::no_operation);
+    app.display_dynamic_resolution_follow_display = 0;
+    auto processor = make_processor(std::move(app));
+    rtsp_stream::launch_session_t session {};
+    session.resolution_change_override = static_cast<int>(resolution_change_e::automatic);
+    session.refresh_rate_change_override = static_cast<int>(refresh_rate_change_e::automatic);
+    session.dynamic_resolution_follow_display_override = 1;
+
+    ASSERT_TRUE(processor.apply_app_display_profile(42, session));
+    EXPECT_EQ(session.resolution_change_override, static_cast<int>(resolution_change_e::no_operation));
+    EXPECT_EQ(session.refresh_rate_change_override, static_cast<int>(refresh_rate_change_e::no_operation));
+    EXPECT_EQ(session.dynamic_resolution_follow_display_override, 0);
   }
 
 }  // namespace

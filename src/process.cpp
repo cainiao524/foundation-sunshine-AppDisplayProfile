@@ -523,6 +523,9 @@ namespace proc {
       launch_session.refresh_rate_change_override = app.display_refresh_rate_mode;
       launch_session.manual_refresh_rate_override = app.display_refresh_rate;
     }
+    if (app.display_dynamic_resolution_follow_display >= 0) {
+      launch_session.dynamic_resolution_follow_display_override = app.display_dynamic_resolution_follow_display;
+    }
     launch_session.restore_display_on_disconnect = app.restore_display_on_disconnect;
 
     if (app.display_target == 0) {
@@ -889,6 +892,7 @@ namespace proc {
         auto display_resolution = app_node.get_optional<std::string>("display-resolution"s);
         auto display_refresh_rate_mode = app_node.get_optional<std::string>("display-refresh-rate-mode"s);
         auto display_refresh_rate = app_node.get_optional<std::string>("display-refresh-rate"s);
+        auto display_dynamic_resolution = app_node.get_optional<std::string>("display-dynamic-resolution-follow-display"s);
         auto disconnect_action = app_node.get_optional<std::string>("display-disconnect-action"s);
         auto display_output_name = app_node.get_optional<std::string>("display-output-name"s);
 
@@ -981,19 +985,31 @@ namespace proc {
         if (display_device_prep && !display_device_prep->empty()) {
           ctx.display_device_prep = display_device::parsed_config_t::device_prep_from_view(*display_device_prep);
         }
-        if (display_resolution_mode && *display_resolution_mode == "client"sv) {
+        if (display_resolution_mode && *display_resolution_mode == "no_operation"sv) {
+          ctx.display_resolution_mode = static_cast<int>(display_device::parsed_config_t::resolution_change_e::no_operation);
+        }
+        else if (display_resolution_mode && *display_resolution_mode == "client"sv) {
           ctx.display_resolution_mode = static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic);
         }
         else if (display_resolution_mode && *display_resolution_mode == "fixed"sv) {
           ctx.display_resolution_mode = static_cast<int>(display_device::parsed_config_t::resolution_change_e::manual);
           ctx.display_resolution = display_resolution.value_or("");
         }
-        if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
+        if (display_refresh_rate_mode && *display_refresh_rate_mode == "no_operation"sv) {
+          ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::no_operation);
+        }
+        else if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
           ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::automatic);
         }
         else if (display_refresh_rate_mode && *display_refresh_rate_mode == "fixed"sv) {
           ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::manual);
           ctx.display_refresh_rate = display_refresh_rate.value_or("");
+        }
+        if (display_dynamic_resolution && *display_dynamic_resolution == "enabled"sv) {
+          ctx.display_dynamic_resolution_follow_display = 1;
+        }
+        else if (display_dynamic_resolution && *display_dynamic_resolution == "disabled"sv) {
+          ctx.display_dynamic_resolution_follow_display = 0;
         }
         ctx.restore_display_on_disconnect = disconnect_action && *disconnect_action == "restore"sv;
         ctx.display_output_name = display_output_name.value_or("");

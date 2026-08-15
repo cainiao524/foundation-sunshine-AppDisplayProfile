@@ -552,6 +552,7 @@ namespace stream {
     int custom_screen_mode {-1};
     int custom_vdd_screen_mode {-1};
     bool restore_display_on_disconnect {false};
+    int dynamic_resolution_follow_display_override {-1};
     bool highly_suspected_unknown_client {false};
     std::string app_name;
     int app_id = 0;
@@ -3676,7 +3677,12 @@ namespace stream {
     BOOST_LOG(debug) << "Start capturing Video"sv;
     // Debug: Log the display_name before calling video::capture
     BOOST_LOG(debug) << "stream.cpp: session->config.monitor.display_name = [" << (session->config.monitor.display_name.empty() ? "<empty>" : session->config.monitor.display_name) << "]";
-    video::capture(session->mail, session->config.monitor, session, session->video.dynamic_param_change_events);
+    video::capture(
+      session->mail,
+      session->config.monitor,
+      session,
+      session->dynamic_resolution_follow_display_override,
+      session->video.dynamic_param_change_events);
   }
 
   void
@@ -4027,6 +4033,7 @@ namespace stream {
       session->custom_screen_mode = launch_session.custom_screen_mode;
       session->custom_vdd_screen_mode = launch_session.custom_vdd_screen_mode;
       session->restore_display_on_disconnect = launch_session.restore_display_on_disconnect;
+      session->dynamic_resolution_follow_display_override = launch_session.dynamic_resolution_follow_display_override;
       session->highly_suspected_unknown_client = launch_session.highly_suspected_unknown_client;
       session->app_id = launch_session.appid;
       session->app_name = proc::proc.get_app_name(launch_session.appid);

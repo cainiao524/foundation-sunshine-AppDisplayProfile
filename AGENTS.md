@@ -33,7 +33,7 @@
 
 ## 上游正式版同步与云端构建操作
 
-处理上游同步时必须使用 `.github/workflows/sync-upstream-build.yml`，不要手工把上游 `master` 合并到功能分支。该工作流每六小时检查一次，也可以手动触发。
+处理上游同步时必须由用户手动触发 `.github/workflows/sync-upstream-build.yml`，不要手工把上游 `master` 合并到功能分支。禁止恢复定时计划或在无人确认时自动合并新的上游正式版。
 
 同步流程必须保持以下顺序：
 
@@ -42,7 +42,7 @@
 3. 仅在能够快进时更新 Fork 的 `master` 镜像；禁止回退或强推。
 4. 把正式版提交正常合并到 `feature/app-display-profile`。发生冲突时立即失败并要求人工处理。
 5. 推送合并结果和 `.github/upstream-stable-release` 状态记录。
-6. 直接调用可复用的 `.github/workflows/main.yml`，等待网页测试、VDD 冒烟测试、Windows 原生编译、原生测试和打包全部完成。
+6. 把合并后的精确提交号传给可复用的 `.github/workflows/main.yml`，等待网页测试、VDD 冒烟测试、Windows 原生编译、原生测试和打包全部完成。
 7. 只上传安装版、便携版、`SHA256SUMS.txt` 和 `checksums.json` 到 GitHub Actions 产物。未经用户明确授权，不创建标签或 Release。
 
 修改工作流后必须先在本地运行：

@@ -850,6 +850,7 @@ namespace confighttp {
           "display-resolution",
           "display-refresh-rate-mode",
           "display-refresh-rate",
+          "display-dynamic-resolution-follow-display",
           "display-output-name",
           "display-disconnect-action",
         };
@@ -868,6 +869,7 @@ namespace confighttp {
           for (const auto *key : {
                  "display-target", "display-device-prep", "display-resolution-mode", "display-resolution",
                  "display-refresh-rate-mode", "display-refresh-rate",
+                 "display-dynamic-resolution-follow-display",
                  "display-output-name", "display-disconnect-action"}) {
             app_node.erase(key);
           }
@@ -891,9 +893,11 @@ namespace confighttp {
 
         const auto resolution_mode = app_node.get<std::string>("display-resolution-mode", "");
         const auto refresh_mode = app_node.get<std::string>("display-refresh-rate-mode", "");
+        const auto dynamic_resolution = app_node.get<std::string>("display-dynamic-resolution-follow-display", "");
         const auto disconnect = app_node.get<std::string>("display-disconnect-action", "keep");
-        if ((!resolution_mode.empty() && !one_of(resolution_mode, {"client"sv, "fixed"sv})) ||
-            (!refresh_mode.empty() && !one_of(refresh_mode, {"client"sv, "fixed"sv})) ||
+        if ((!resolution_mode.empty() && !one_of(resolution_mode, {"no_operation"sv, "client"sv, "fixed"sv})) ||
+            (!refresh_mode.empty() && !one_of(refresh_mode, {"no_operation"sv, "client"sv, "fixed"sv})) ||
+            (!dynamic_resolution.empty() && !one_of(dynamic_resolution, {"enabled"sv, "disabled"sv})) ||
             !one_of(disconnect, {"keep"sv, "restore"sv})) {
           outputTree.put("status", "false");
           outputTree.put("error", "Invalid per-app display profile option");

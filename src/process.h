@@ -73,8 +73,9 @@ namespace proc {
     int gamepad_mode;  ///< 0=inherit global, 1=auto, 2=Xbox 360, 3=DualShock 4
     int display_target {-1};  ///< -1=inherit, 0=physical, 1=virtual
     int display_device_prep {-1};
-    int display_resolution_mode {-1};  ///< -1=inherit, 1=client, 2=fixed
-    int display_refresh_rate_mode {-1};  ///< -1=inherit, 1=client, 2=fixed
+    int display_resolution_mode {-1};  ///< -1=inherit, 0=no operation, 1=client, 2=fixed
+    int display_refresh_rate_mode {-1};  ///< -1=inherit, 0=no operation, 1=client, 2=fixed
+    int display_dynamic_resolution_follow_display {-1};  ///< -1=inherit, 0=disabled, 1=enabled
     std::string display_resolution;
     std::string display_refresh_rate;
     std::string display_output_name;

@@ -57,6 +57,7 @@ namespace rtsp_stream {
     int display_target_override {-1};  ///< -1=inherit, 0=physical, 1=virtual
     int resolution_change_override {-1};
     int refresh_rate_change_override {-1};
+    int dynamic_resolution_follow_display_override {-1};
     std::string manual_resolution_override;
     std::string manual_refresh_rate_override;
     bool restore_display_on_disconnect {false};

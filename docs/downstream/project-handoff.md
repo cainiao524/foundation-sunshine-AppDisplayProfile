@@ -16,7 +16,7 @@
 - 开发分支：`feature/app-display-profile`
 - `master` 仅保存上游基础线，不用于开发定制功能。
 
-上游同步只跟随 GitHub 正式发布，不根据草稿、预发布或开发分支猜测版本。合并冲突必须人工处理，禁止强制覆盖功能分支。构建目录、驱动签名文件和无关改动不得提交。
+上游同步只跟随 GitHub 正式发布，不根据草稿、预发布或开发分支猜测版本。同步工作流只允许用户手动触发，不设置定时自动合并。合并冲突必须人工处理，禁止强制覆盖功能分支。构建目录、驱动签名文件和无关改动不得提交。
 
 ## APP 优先级
 
@@ -31,6 +31,7 @@
   "display-device-prep": "ensure_secondary",
   "display-resolution-mode": "client",
   "display-refresh-rate-mode": "client",
+  "display-dynamic-resolution-follow-display": "enabled",
   "display-disconnect-action": "keep"
 }
 ```

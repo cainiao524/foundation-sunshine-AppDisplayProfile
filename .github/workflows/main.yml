@@ -33,6 +33,10 @@ on:
         description: '新发布页面显示的名称'
         required: true
         type: string
+      source-ref:
+        description: '需要检出、测试和打包的精确提交或引用'
+        required: true
+        type: string
   workflow_dispatch:
     inputs:
       build-version:
@@ -50,6 +54,10 @@ on:
         type: string
       release-name:
         description: '新发布页面显示的名称'
+        required: false
+        type: string
+      source-ref:
+        description: '需要检出、测试和打包的精确提交或引用；留空时使用当前提交'
         required: false
         type: string
 
@@ -100,6 +108,7 @@ jobs:
           REQUESTED_NAME: ${{ inputs['release-name'] }}
           REQUESTED_TAG: ${{ inputs['release-tag'] }}
           REQUESTED_VERSION: ${{ inputs['build-version'] }}
+          REQUESTED_SOURCE_REF: ${{ inputs['source-ref'] }}
         run: |
           SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
           if [ -n "$REQUESTED_VERSION" ]; then
@@ -109,9 +118,10 @@ jobs:
           fi
           TAG="${REQUESTED_TAG:-$VERSION}"
           NAME="${REQUESTED_NAME:-$TAG}"
+          SOURCE_REF="${REQUESTED_SOURCE_REF:-${{ github.sha }}}"
           echo "publish_release=${PUBLISH_RELEASE}" >> $GITHUB_OUTPUT
           echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
-          echo "release_commit=${{ github.sha }}" >> $GITHUB_OUTPUT
+          echo "release_commit=${SOURCE_REF}" >> $GITHUB_OUTPUT
           echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
           echo "release_name=$NAME" >> $GITHUB_OUTPUT
           echo "release_tag=$TAG" >> $GITHUB_OUTPUT
@@ -119,10 +129,13 @@ jobs:
 
   vdd_smoke:
     name: VDD helper smoke tests
+    needs: setup_release
     runs-on: windows-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.setup_release.outputs.release_commit }}
 
       - name: Run VDD helper smoke tests
         shell: pwsh
@@ -138,7 +151,7 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ needs.setup_release.outputs.release_commit }}
           submodules: recursive
 
       - name: Setup Dependencies Windows

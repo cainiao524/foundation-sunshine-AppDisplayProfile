@@ -180,7 +180,8 @@
                       name="app_resolution_change"
                       label-key="apps.display_profile_resolution"
                       option-key-prefix="apps.display_profile_"
-                      :options="['inherit', 'follow_client', 'fixed']"
+                      :options="['inherit', 'no_operation', 'follow_client', 'fixed']"
+                      :option-labels="appResolutionOptionLabels"
                       :platform-aware="false"
                     >
                       <div class="form-text" v-if="appResolutionRule === 'follow_client' || appResolutionRule === 'fixed'">
@@ -203,7 +204,8 @@
                       name="app_refresh_rate_change"
                       label-key="apps.display_profile_refresh_rate"
                       option-key-prefix="apps.display_profile_"
-                      :options="['inherit', 'follow_client', 'fixed']"
+                      :options="['inherit', 'no_operation', 'follow_client', 'fixed']"
+                      :option-labels="appRefreshRateOptionLabels"
                       :platform-aware="false"
                     >
                       <div class="nested-setting mt-2" v-if="appRefreshRateRule === 'fixed'">
@@ -216,6 +218,18 @@
                           v-model.trim="formData['display-refresh-rate']"
                         />
                       </div>
+                    </DisplayRuleRadioGroup>
+
+                    <DisplayRuleRadioGroup
+                      v-model="appDynamicResolutionRule"
+                      name="app_dynamic_resolution"
+                      label-key="config.dynamic_resolution_follow_display"
+                      option-key-prefix="apps.display_profile_"
+                      :options="['inherit', 'enabled', 'disabled']"
+                      :option-labels="appDynamicResolutionOptionLabels"
+                      :platform-aware="false"
+                    >
+                      <div class="form-text">{{ t('config.dynamic_resolution_follow_display_desc') }}</div>
                     </DisplayRuleRadioGroup>
 
                     <DisplayRuleRadioGroup
@@ -445,6 +459,7 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'display-resolution': '',
   'display-refresh-rate-mode': '',
   'display-refresh-rate': '',
+  'display-dynamic-resolution-follow-display': '',
   'display-output-name': '',
   'display-disconnect-action': 'keep',
 })
@@ -509,19 +524,49 @@ const appDisplayOutput = computed({
 })
 const displayRuleModes = Object.freeze({
   '': 'inherit',
+  no_operation: 'no_operation',
   client: 'follow_client',
   fixed: 'fixed',
 })
+const appResolutionOptionLabels = computed(() => ({
+  inherit: t('apps.display_profile_inherit'),
+  no_operation: tp('config.resolution_change_no_operation'),
+  follow_client: tp('config.resolution_change_automatic'),
+  fixed: tp('config.resolution_change_manual'),
+}))
+const appRefreshRateOptionLabels = computed(() => ({
+  inherit: t('apps.display_profile_inherit'),
+  no_operation: tp('config.refresh_rate_change_no_operation'),
+  follow_client: tp('config.refresh_rate_change_automatic'),
+  fixed: tp('config.refresh_rate_change_manual'),
+}))
+const appDynamicResolutionOptionLabels = computed(() => ({
+  inherit: t('apps.display_profile_inherit'),
+  enabled: t('_common.enabled'),
+  disabled: t('_common.disabled'),
+}))
+const displayRuleValue = (mode) => {
+  if (mode === 'no_operation') return 'no_operation'
+  if (mode === 'follow_client') return 'client'
+  if (mode === 'fixed') return 'fixed'
+  return ''
+}
 const appResolutionRule = computed({
   get: () => displayRuleModes[formData.value?.['display-resolution-mode']] || 'inherit',
   set: (mode) => {
-    formData.value['display-resolution-mode'] = mode === 'follow_client' ? 'client' : mode === 'fixed' ? 'fixed' : ''
+    formData.value['display-resolution-mode'] = displayRuleValue(mode)
   },
 })
 const appRefreshRateRule = computed({
   get: () => displayRuleModes[formData.value?.['display-refresh-rate-mode']] || 'inherit',
   set: (mode) => {
-    formData.value['display-refresh-rate-mode'] = mode === 'follow_client' ? 'client' : mode === 'fixed' ? 'fixed' : ''
+    formData.value['display-refresh-rate-mode'] = displayRuleValue(mode)
+  },
+})
+const appDynamicResolutionRule = computed({
+  get: () => formData.value?.['display-dynamic-resolution-follow-display'] || 'inherit',
+  set: (mode) => {
+    formData.value['display-dynamic-resolution-follow-display'] = mode === 'enabled' || mode === 'disabled' ? mode : ''
   },
 })
 const isNewApp = computed(() => !props.app || props.app.index === -1)

@@ -3656,6 +3656,7 @@ namespace video {
     safe::mail_t mail,
     config_t &config,
     void *channel_data,
+    int dynamic_resolution_follow_display_override,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
     auto shutdown_event = mail->event<bool>(mail::shutdown);
 
@@ -3779,7 +3780,10 @@ namespace video {
         last_display_width = current_width;
         last_display_height = current_height;
 
-        if (!config::video.dynamic_resolution_follow_display) {
+        const bool dynamic_resolution_follow_display = dynamic_resolution_follow_display_override >= 0 ?
+                                                         dynamic_resolution_follow_display_override != 0 :
+                                                         config::video.dynamic_resolution_follow_display;
+        if (!dynamic_resolution_follow_display) {
           // Toggle off: keep the originally negotiated stream resolution and let the
           // encoder's scaler adapt. Avoids sending SS_RESOLUTION_CHANGE, which legacy
           // Moonlight clients (e.g. PSVita port) don't implement and would freeze on.
@@ -3843,12 +3847,13 @@ namespace video {
     safe::mail_t mail,
     config_t config,
     void *channel_data,
+    int dynamic_resolution_follow_display_override,
     std::optional<safe::mail_raw_t::event_t<dynamic_param_t>> dynamic_param_events) {
     auto idr_events = mail->event<bool>(mail::idr);
 
     idr_events->raise(true);
     if (chosen_encoder->flags & PARALLEL_ENCODING) {
-      capture_async(std::move(mail), config, channel_data, dynamic_param_events);
+      capture_async(std::move(mail), config, channel_data, dynamic_resolution_follow_display_override, dynamic_param_events);
     }
     else {
       safe::signal_t join_event;

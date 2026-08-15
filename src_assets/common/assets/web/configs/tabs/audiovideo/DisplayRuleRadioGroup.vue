@@ -19,6 +19,10 @@ defineProps({
     type: Array,
     required: true,
   },
+  optionLabels: {
+    type: Object,
+    default: () => ({}),
+  },
   platformAware: {
     type: Boolean,
     default: true,
@@ -48,7 +52,7 @@ const emit = defineEmits(['update:modelValue'])
           :checked="modelValue === option"
           @change="emit('update:modelValue', option)"
         />
-        <span>{{ platformAware ? $tp(optionKeyPrefix + option) : $t(optionKeyPrefix + option) }}</span>
+        <span>{{ optionLabels[option] || (platformAware ? $tp(optionKeyPrefix + option) : $t(optionKeyPrefix + option)) }}</span>
       </label>
     </div>
     <slot></slot>

@@ -17,10 +17,11 @@
 | --- | --- | --- |
 | `display-target` | 空、`virtual`、`physical` | 跟随全局、基地虚拟显示器、指定物理显示器 |
 | `display-device-prep` | `no_operation`、`ensure_active`、`ensure_primary`、`ensure_secondary`、`ensure_only_display` | 复用基地版显示准备动作 |
-| `display-resolution-mode` | 空、`client`、`fixed` | 跟随全局、客户端请求或固定分辨率 |
+| `display-resolution-mode` | 空、`no_operation`、`client`、`fixed` | 跟随全局、保持当前分辨率、客户端请求或固定分辨率 |
 | `display-resolution` | 例如 `1920x1080` | 固定分辨率值 |
-| `display-refresh-rate-mode` | 空、`client`、`fixed` | 跟随全局、客户端请求或固定刷新率 |
+| `display-refresh-rate-mode` | 空、`no_operation`、`client`、`fixed` | 跟随全局、保持当前刷新率、客户端请求或固定刷新率 |
 | `display-refresh-rate` | 例如 `60` | 固定刷新率值 |
+| `display-dynamic-resolution-follow-display` | 空、`enabled`、`disabled` | 跟随全局、启用或禁用串流中跟随主机分辨率变化 |
 | `display-output-name` | 显示器编号或名称 | `physical` 方案的目标显示器 |
 | `display-disconnect-action` | `keep`、`restore` | 断开后保持或恢复显示状态 |
 
@@ -34,6 +35,17 @@
   "display-refresh-rate-mode": "client"
 }
 ```
+
+需要保持主机当前分辨率和刷新率、不接受客户端显示模式请求时，使用：
+
+```json
+{
+  "display-resolution-mode": "no_operation",
+  "display-refresh-rate-mode": "no_operation"
+}
+```
+
+动态分辨率字段只选择基地版现有行为，不重新实现编码器重建或客户端通知。字段缺失时继续使用全局 `dynamic_resolution_follow_display`。
 
 ## Foundation Desktop
 
