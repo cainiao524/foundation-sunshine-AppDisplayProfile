@@ -67,7 +67,8 @@ jobs:
             "mingw-w64-ucrt-x86_64-MinHook"
             "mingw-w64-ucrt-x86_64-miniupnpc"
             "mingw-w64-ucrt-x86_64-nlohmann-json"
-            "mingw-w64-ucrt-x86_64-nodejs"
+            # Node.js is provided by actions/setup-node below. Vite/Rolldown
+            # needs the Windows MSVC native binding, not the MSYS2 GNU one.
             # "mingw-w64-ucrt-x86_64-nsis"  # Replaced by Inno Setup
             "mingw-w64-ucrt-x86_64-onevpl"
             "mingw-w64-ucrt-x86_64-openssl"
@@ -78,6 +79,13 @@ jobs:
           # We install Rust via rustup in a separate step
 
           pacman -Syu --noconfirm "${dependencies[@]}"
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: package-lock.json
 
       - name: Install Rust (for Tauri GUI)
         shell: msys2 {0}
