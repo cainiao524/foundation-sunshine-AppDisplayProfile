@@ -222,46 +222,6 @@ namespace display_device {
     }
 
     /**
-     * @brief Compute the new display modes based on the information we have.
-     * @param resolution Resolution value from the configuration.
-     * @param refresh_rate Refresh rate value from the configuration.
-     * @param original_display_modes Original display modes (the ones before our first modification or from current topology)
-     *                               that we use as a base we will apply changes to.
-     * @param metadata The current metadata that we are evaluating.
-     * @return New display modes for the topology.
-     */
-    device_display_mode_map_t
-    determine_new_display_modes(const boost::optional<resolution_t> &resolution, const boost::optional<refresh_rate_t> &refresh_rate, const device_display_mode_map_t &original_display_modes, const topology_metadata_t &metadata) {
-      device_display_mode_map_t new_modes { original_display_modes };
-
-      if (resolution) {
-        // For duplicate devices the resolution must match no matter what, otherwise
-        // they cannot be duplicated, which breaks Windows' rules.
-        for (const auto &device_id : metadata.duplicated_devices) {
-          new_modes[device_id].resolution = *resolution;
-        }
-      }
-
-      if (refresh_rate) {
-        if (metadata.primary_device_requested) {
-          // No device has been specified, so if they're all are primary devices
-          // we need to apply the refresh rate change to all duplicates
-          for (const auto &device_id : metadata.duplicated_devices) {
-            new_modes[device_id].refresh_rate = *refresh_rate;
-          }
-        }
-        else {
-          // Even if we have duplicate devices, their refresh rate may differ
-          // and since the device was specified, let's apply the refresh
-          // rate only to the specified device.
-          new_modes[metadata.duplicated_devices.front()].refresh_rate = *refresh_rate;
-        }
-      }
-
-      return new_modes;
-    }
-
-    /**
      * @brief Remove entries from a device_id-keyed map whose keys are not in the valid set.
      */
     template<typename MapT>
@@ -298,6 +258,109 @@ namespace display_device {
       }
     }
 
+    bool
+    is_valid_refresh_rate(const refresh_rate_t &refresh_rate) {
+      return refresh_rate.numerator > 0 && refresh_rate.denominator > 0;
+    }
+
+    boost::optional<refresh_rate_t>
+    find_fallback_refresh_rate(
+      const device_display_mode_map_t &display_modes,
+      const active_topology_t &preferred_topology) {
+      const auto find_for_device = [&display_modes](const std::string &device_id) -> boost::optional<refresh_rate_t> {
+        const auto mode_it = display_modes.find(device_id);
+        if (mode_it != display_modes.end() && is_valid_refresh_rate(mode_it->second.refresh_rate)) {
+          return mode_it->second.refresh_rate;
+        }
+        return boost::none;
+      };
+
+      // The first device in the first topology group is the original primary
+      // display on Windows. Prefer its saved refresh rate for a new VDD.
+      for (const auto &group : preferred_topology) {
+        for (const auto &device_id : group) {
+          if (const auto refresh_rate = find_for_device(device_id)) {
+            return refresh_rate;
+          }
+        }
+      }
+
+      // Fall back to any valid saved physical-display mode if the topology
+      // changed while the session was being prepared.
+      for (const auto &[_, mode] : display_modes) {
+        if (is_valid_refresh_rate(mode.refresh_rate)) {
+          return mode.refresh_rate;
+        }
+      }
+
+      return boost::none;
+    }
+
+    /**
+     * @brief Compute the new display modes based on the information we have.
+     * @param resolution Resolution value from the configuration.
+     * @param refresh_rate Refresh rate value from the configuration.
+     * @param original_display_modes Original display modes (the ones before our first modification or from current topology)
+     *                               that we use as a base we will apply changes to.
+     * @param metadata The current metadata that we are evaluating.
+     * @param preferred_topology The topology used to select a refresh rate fallback.
+     * @return New display modes for the topology.
+     */
+    device_display_mode_map_t
+    determine_new_display_modes(
+      const boost::optional<resolution_t> &resolution,
+      const boost::optional<refresh_rate_t> &refresh_rate,
+      const device_display_mode_map_t &original_display_modes,
+      const topology_metadata_t &metadata,
+      const active_topology_t &preferred_topology) {
+      device_display_mode_map_t new_modes { original_display_modes };
+      const auto fallback_refresh_rate = resolution && !refresh_rate
+        ? find_fallback_refresh_rate(original_display_modes, preferred_topology)
+        : boost::none;
+
+      if (resolution) {
+        // For duplicate devices the resolution must match no matter what, otherwise
+        // they cannot be duplicated, which breaks Windows' rules.
+        for (const auto &device_id : metadata.duplicated_devices) {
+          auto &mode = new_modes[device_id];
+          mode.resolution = *resolution;
+
+          // A newly created VDD can report a 0/0 target refresh rate while
+          // Windows is still publishing its mode list. Never pass that value
+          // to SetDisplayConfig when only the resolution was requested.
+          if (!refresh_rate && !is_valid_refresh_rate(mode.refresh_rate)) {
+            if (fallback_refresh_rate) {
+              mode.refresh_rate = *fallback_refresh_rate;
+              BOOST_LOG(info) << "Display refresh rate unchanged by configuration; using preserved refresh rate "
+                              << to_string(*fallback_refresh_rate) << " for the new display mode.";
+            }
+            else {
+              mode.refresh_rate = { 60, 1 };
+              BOOST_LOG(warning) << "No valid preserved refresh rate was available for the new display mode; using 60Hz fallback.";
+            }
+          }
+        }
+      }
+
+      if (refresh_rate) {
+        if (metadata.primary_device_requested) {
+          // No device has been specified, so if they're all are primary devices
+          // we need to apply the refresh rate change to all duplicates
+          for (const auto &device_id : metadata.duplicated_devices) {
+            new_modes[device_id].refresh_rate = *refresh_rate;
+          }
+        }
+        else {
+          // Even if we have duplicate devices, their refresh rate may differ
+          // and since the device was specified, let's apply the refresh
+          // rate only to the specified device.
+          new_modes[metadata.duplicated_devices.front()].refresh_rate = *refresh_rate;
+        }
+      }
+
+      return new_modes;
+    }
+
     /**
      * @brief Modify the display modes based on the configuration and previously configured display modes.
      *
@@ -309,10 +372,16 @@ namespace display_device {
      * @param refresh_rate Refresh rate value from the configuration.
      * @param previous_display_modes Original display modes that we have initially changed (can be empty).
      * @param metadata Additional data with info about the current topology.
+     * @param preferred_topology The topology used to select a refresh rate fallback.
      * @return Display modes to be used when reverting all settings (can be empty map), or an empty optional if the function fails.
      */
     boost::optional<device_display_mode_map_t>
-    handle_display_mode_configuration(const boost::optional<resolution_t> &resolution, const boost::optional<refresh_rate_t> &refresh_rate, const device_display_mode_map_t &previous_display_modes, const topology_metadata_t &metadata) {
+    handle_display_mode_configuration(
+      const boost::optional<resolution_t> &resolution,
+      const boost::optional<refresh_rate_t> &refresh_rate,
+      const device_display_mode_map_t &previous_display_modes,
+      const topology_metadata_t &metadata,
+      const active_topology_t &preferred_topology) {
       // Build a set of device IDs present in current topology to filter out stale entries
       // (e.g. old VDD device IDs lingering in persistent_data after a client switch).
       const auto valid_device_ids { get_device_ids_from_topology(metadata.current_topology) };
@@ -320,7 +389,12 @@ namespace display_device {
 
       if (resolution || refresh_rate) {
         const auto original_display_modes { previous_display_modes.empty() ? get_current_display_modes(valid_device_ids) : previous_display_modes };
-        auto new_display_modes { determine_new_display_modes(resolution, refresh_rate, original_display_modes, metadata) };
+        auto new_display_modes { determine_new_display_modes(
+          resolution,
+          refresh_rate,
+          original_display_modes,
+          metadata,
+          preferred_topology) };
 
         filter_stale_devices(new_display_modes, valid_ids_set, "display modes");
 
@@ -1088,7 +1162,12 @@ namespace display_device {
       const auto previous_display_modes = current_settings.original_modes.empty() && pre_saved_initial_modes
         ? *pre_saved_initial_modes
         : current_settings.original_modes;
-      const auto original_modes { handle_display_mode_configuration(config.resolution, config.refresh_rate, previous_display_modes, topology_result->metadata) };
+      const auto original_modes { handle_display_mode_configuration(
+        config.resolution,
+        config.refresh_rate,
+        previous_display_modes,
+        topology_result->metadata,
+        topology_result->pair.initial) };
       if (!original_modes) {
         // Error already logged
         return { apply_result_t::result_e::modes_fail };
