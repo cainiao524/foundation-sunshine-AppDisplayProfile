@@ -147,9 +147,11 @@ jobs:
           which cargo || (echo "cargo not found" && exit 1)
           
           echo "All build tools verified successfully"
-          echo "  CMake: $(cmake --version | head -1)"
+          echo "  CMake:"
+          cmake --version
           echo "  Ninja: $(ninja --version)"
-          echo "  GCC: $(gcc --version | head -1)"
+          echo "  GCC:"
+          gcc --version
           echo "  Cargo: $(cargo --version)"
 
       - name: Build Windows
@@ -169,7 +171,7 @@ jobs:
           command -v ninja
           command -v cargo
           command -v npm
-          cmake --version | head -1
+          cmake --version
           ninja --version
           cargo --version
           npm --version
