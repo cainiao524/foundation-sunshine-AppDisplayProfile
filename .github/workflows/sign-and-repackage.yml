@@ -162,7 +162,17 @@ jobs:
           # add Rust to PATH for Tauri GUI build
           WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
           CARGO_BIN="/c/Users/${WINDOWS_USER}/.cargo/bin"
-          export PATH="$CARGO_BIN:$PATH"
+          export PATH="/ucrt64/bin:/usr/bin:$CARGO_BIN:$PATH"
+
+          echo "Build tool paths:"
+          command -v cmake
+          command -v ninja
+          command -v cargo
+          command -v npm
+          cmake --version | head -1
+          ninja --version
+          cargo --version
+          npm --version
 
           mkdir -p build
           cmake \
@@ -172,8 +182,8 @@ jobs:
             -DBUILD_DOCS=OFF \
             -DSUNSHINE_ASSETS_DIR=assets \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
-            -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/qiin2333/Sunshine-Foundation' \
-            -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/qiin2333/Sunshine-Foundation/issues'
+            -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/${{ github.repository }}' \
+            -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/${{ github.repository }}/issues'
           ninja -C build
           ninja -C build sunshine-control-panel
 
