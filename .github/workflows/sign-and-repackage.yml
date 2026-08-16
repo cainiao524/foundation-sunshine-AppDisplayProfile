@@ -182,7 +182,6 @@ jobs:
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/${{ github.repository }}' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/${{ github.repository }}/issues'
           ninja -C build
-          ninja -C build sunshine-control-panel
 
       # Install Inno Setup
       - name: Install Inno Setup
