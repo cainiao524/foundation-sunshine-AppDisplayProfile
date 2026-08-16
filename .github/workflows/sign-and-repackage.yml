@@ -87,6 +87,15 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
+      - name: Build Web UI
+        shell: pwsh
+        run: |
+          npm ci
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $env:SUNSHINE_SOURCE_ASSETS_DIR = "${{ github.workspace }}\src_assets"
+          $env:SUNSHINE_ASSETS_DIR = "${{ github.workspace }}\build"
+          npm run build
+
       - name: Install Rust (for Tauri GUI)
         shell: msys2 {0}
         run: |
@@ -157,11 +166,9 @@ jobs:
           command -v cmake
           command -v ninja
           command -v cargo
-          command -v npm
           cmake --version
           ninja --version
           cargo --version
-          npm --version
 
           mkdir -p build
           cmake \
@@ -169,6 +176,7 @@ jobs:
             -G Ninja \
             -S . \
             -DBUILD_DOCS=OFF \
+            -DBUILD_WEB_UI=OFF \
             -DSUNSHINE_ASSETS_DIR=assets \
             -DSUNSHINE_PUBLISHER_NAME='${{ github.repository_owner }}' \
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/${{ github.repository }}' \
