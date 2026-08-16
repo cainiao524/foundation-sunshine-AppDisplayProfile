@@ -52,31 +52,11 @@ jobs:
             wget
 
       - name: Update Windows dependencies
-        env:
-          gcc_version: '15.1.0-5'
         shell: msys2 {0}
         run: |
-          broken_deps=(
-            "mingw-w64-ucrt-x86_64-gcc"
-            "mingw-w64-ucrt-x86_64-gcc-libs"
-          )
-
-          tarballs=""
-          for dep in "${broken_deps[@]}"; do
-            tarball="${dep}-${gcc_version}-any.pkg.tar.zst"
-
-            # download and install working version
-            wget https://repo.msys2.org/mingw/ucrt64/${tarball}
-
-            tarballs="${tarballs} ${tarball}"
-          done
-
-          # install broken dependencies
-          if [ -n "$tarballs" ]; then
-            pacman -U --noconfirm ${tarballs}
-          fi
-
           # install dependencies
+          # Keep the current GCC runtime ABI. Pinning the old gcc-libs 15.x
+          # makes newer cmake.exe fail to load and return exit code 127.
           dependencies=(
             "git"
             "mingw-w64-ucrt-x86_64-cmake"
@@ -95,10 +75,9 @@ jobs:
             "mingw-w64-ucrt-x86_64-toolchain"
           )
 
-          # Note: mingw-w64-ucrt-x86_64-rust conflicts with fixed gcc-15.1.0-5
           # We install Rust via rustup in a separate step
 
-          pacman -Syu --noconfirm --ignore="$(IFS=,; echo "${broken_deps[*]}")" "${dependencies[@]}"
+          pacman -Syu --noconfirm "${dependencies[@]}"
 
       - name: Install Rust (for Tauri GUI)
         shell: msys2 {0}
