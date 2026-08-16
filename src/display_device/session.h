@@ -243,11 +243,13 @@ namespace display_device {
 
     struct pending_vdd_context_t {
       boost::optional<active_topology_t> initial_topology;
+      boost::optional<device_display_mode_map_t> initial_modes;
       boost::optional<device_info_map_t> pre_vdd_devices;
 
       void
       reset() {
         initial_topology.reset();
+        initial_modes.reset();
         pre_vdd_devices.reset();
       }
     };

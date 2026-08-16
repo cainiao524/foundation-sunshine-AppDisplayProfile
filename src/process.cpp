@@ -534,6 +534,7 @@ namespace proc {
     launch_session.restore_display_on_disconnect = app.restore_display_on_disconnect;
 
     if (app.display_target == 0) {
+      launch_session.app_display_output_name_override = app.display_output_name;
       if (!app.display_output_name.empty()) {
         launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = app.display_output_name;
       }
@@ -542,6 +543,7 @@ namespace proc {
       }
     }
     else {
+      launch_session.app_display_output_name_override.clear();
       launch_session.env.erase("SUNSHINE_CLIENT_DISPLAY_NAME");
     }
 

@@ -938,7 +938,8 @@ namespace display_device {
   settings_t::apply_config(
     const parsed_config_t &config,
     const rtsp_stream::launch_session_t &session,
-    const boost::optional<active_topology_t> &pre_saved_initial_topology) {
+    const boost::optional<active_topology_t> &pre_saved_initial_topology,
+    const boost::optional<device_display_mode_map_t> &pre_saved_initial_modes) {
     auto profile_setting = color_profile::resolve_client_hdr_profile(
       config::get_clients_config(), session.client_cert_uuid, session.client_name);
     if (!profile_setting) {
@@ -950,7 +951,7 @@ namespace display_device {
     }
 
     const bool client_hdr_enabled = session.enable_hdr;
-    const auto do_apply_config { [this, &pre_saved_initial_topology, &profile_setting, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
+    const auto do_apply_config { [this, &pre_saved_initial_topology, &pre_saved_initial_modes, &profile_setting, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
       // 检测是否为VDD模式
       const bool is_vdd_mode = config.use_vdd && *config.use_vdd;
 
@@ -1084,7 +1085,10 @@ namespace display_device {
       }
       current_settings.original_primary_display = *original_primary_display;
 
-      const auto original_modes { handle_display_mode_configuration(config.resolution, config.refresh_rate, current_settings.original_modes, topology_result->metadata) };
+      const auto previous_display_modes = current_settings.original_modes.empty() && pre_saved_initial_modes
+        ? *pre_saved_initial_modes
+        : current_settings.original_modes;
+      const auto original_modes { handle_display_mode_configuration(config.resolution, config.refresh_rate, previous_display_modes, topology_result->metadata) };
       if (!original_modes) {
         // Error already logged
         return { apply_result_t::result_e::modes_fail };

@@ -3,6 +3,7 @@
 #include <boost/process/v1.hpp>
 #include <future>
 #include <thread>
+#include <unordered_set>
 #include <utility>
 
 // local includes
@@ -11,6 +12,7 @@
 #include "src/globals.h"
 #include "src/platform/common.h"
 #include "src/platform/windows/display_device/session_listener.h"
+#include "src/platform/windows/display_device/settings_topology.h"
 #include "src/platform/windows/display_device/windows_utils.h"
 #ifdef _WIN32
   #include "src/platform/windows/vulkan_hdr_bridge_session.h"
@@ -446,8 +448,9 @@ namespace display_device {
       should_prepare_vdd && !is_system_rdp_vdd_session &&
       parsed_config->vdd_prep == parsed_config_t::vdd_prep_e::display_off;
 
-    // 在创建 VDD 可能使 Windows 自动激活显示器、Sunshine 应用目标布局之前保存拓扑。
+    // 在创建 VDD 可能使 Windows 自动激活显示器、Sunshine 应用目标布局之前保存拓扑和显示模式。
     boost::optional<active_topology_t> pre_saved_initial_topology = pending_vdd_.initial_topology;
+    boost::optional<device_display_mode_map_t> pre_saved_initial_modes = pending_vdd_.initial_modes;
     if (should_prepare_vdd) {
       const bool vdd_already_exists = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
       if (will_disable_physical_displays) {
@@ -466,6 +469,14 @@ namespace display_device {
       else if (!is_system_rdp_vdd_session) {
         pending_vdd_.initial_topology = get_current_topology();
         pre_saved_initial_topology = pending_vdd_.initial_topology;
+        const auto initial_device_ids = get_device_ids_from_topology(*pre_saved_initial_topology);
+        const auto initial_modes = get_current_display_modes(
+          std::unordered_set<std::string> { initial_device_ids.begin(), initial_device_ids.end() });
+        if (!initial_modes.empty()) {
+          pending_vdd_.initial_modes = initial_modes;
+          pre_saved_initial_modes = pending_vdd_.initial_modes;
+          BOOST_LOG(debug) << "Pre-saved initial display modes before VDD creation: " << to_string(*pre_saved_initial_modes);
+        }
         BOOST_LOG(debug) << "Pre-saved initial topology before VDD creation: " << to_string(*pre_saved_initial_topology);
       }
 
@@ -525,7 +536,8 @@ namespace display_device {
                            enable_hdr = session.enable_hdr,
                            hdr_target_source = session.hdr_target_source,
                            hdr_capabilities = session.hdr_capabilities,
-                           pre_saved_initial_topology,
+          pre_saved_initial_topology,
+          pre_saved_initial_modes,
                            pre_vdd_devices = pending_vdd_.pre_vdd_devices,
                            should_prepare_vdd,
                            vulkan_hdr_bridge_requested]() {
@@ -555,7 +567,7 @@ namespace display_device {
           retry_session.env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
         }
         retry_session.hdr_capabilities = hdr_capabilities;
-        if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology)) {
+        if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology, pre_saved_initial_modes)) {
           BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!
@@ -609,7 +621,7 @@ namespace display_device {
       }
     }
 
-    const auto apply_result = settings.apply_config(*parsed_config, session, pre_saved_initial_topology);
+    const auto apply_result = settings.apply_config(*parsed_config, session, pre_saved_initial_topology, pre_saved_initial_modes);
     if (apply_result) {
       timer->setup_timer(nullptr);
       pending_vdd_.reset();

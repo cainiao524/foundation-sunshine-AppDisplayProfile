@@ -559,7 +559,11 @@ namespace display_device {
     }
 #endif
     bool client_named_it = false;
-    if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
+    if (!session.app_display_output_name_override.empty()) {
+      device_id = session.app_display_output_name_override;
+      BOOST_LOG(debug) << "使用 APP 配置的显示器: "sv << device_id;
+    }
+    else if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
       if (std::string client_display_name = it->to_string(); !client_display_name.empty()) {
         device_id = std::move(client_display_name);
         client_named_it = true;

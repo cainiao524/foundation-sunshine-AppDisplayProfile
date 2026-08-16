@@ -100,6 +100,33 @@ namespace {
     EXPECT_EQ(session.env["SUNSHINE_CLIENT_DISPLAY_NAME"].to_string(), "configured-physical-display");
   }
 
+  TEST(AppDisplayProfile, MissingConfiguredPhysicalDisplayFallsBackToPrimary) {
+    auto app = make_app(0, static_cast<int>(device_prep_e::ensure_active));
+    app.display_output_name = "__sunshine_app_display_profile_missing_8f6d4f2c__";
+    auto processor = make_processor(std::move(app));
+    rtsp_stream::launch_session_t session {};
+
+    ASSERT_TRUE(processor.apply_app_display_profile(42, session));
+    EXPECT_EQ(session.app_display_output_name_override, "__sunshine_app_display_profile_missing_8f6d4f2c__");
+
+    config::video_t config {};
+    const auto intent = display_device::resolve_display_intent(config, session);
+    EXPECT_EQ(intent.target, display_device::display_intent_t::target_e::physical);
+    EXPECT_TRUE(intent.device_id.empty());
+    EXPECT_FALSE(intent.user_named_display);
+  }
+
+  TEST(AppDisplayProfile, MissingClientPhysicalDisplayIsUnavailable) {
+    rtsp_stream::launch_session_t session {};
+    session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = "__sunshine_client_display_missing_4c91a7be__";
+
+    config::video_t config {};
+    const auto intent = display_device::resolve_display_intent(config, session);
+    EXPECT_EQ(intent.target, display_device::display_intent_t::target_e::unavailable);
+    EXPECT_EQ(intent.device_id, "__sunshine_client_display_missing_4c91a7be__");
+    EXPECT_TRUE(intent.user_named_display);
+  }
+
   TEST(AppDisplayProfile, DisplayModeAndDynamicResolutionOverridesUseBaseEnums) {
     auto app = make_app(1, static_cast<int>(device_prep_e::ensure_active));
     app.display_resolution_mode = static_cast<int>(resolution_change_e::no_operation);
