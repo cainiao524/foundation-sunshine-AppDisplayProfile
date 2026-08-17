@@ -1,6 +1,6 @@
 # Foundation Sunshine 应用显示方案 Fork：项目交接与开发指南
 
-本 Fork 基于 `AlkaidLab/foundation-sunshine`，只在基地版现有显示器、虚拟显示器和串流流程之上增加“按 Sunshine APP 选择显示方案”。新工作区开始开发、同步、构建或发布前，应阅读本文件和 [`app-display-profile.md`](app-display-profile.md)。
+本 Fork 基于 `AlkaidLab/foundation-sunshine`，只在基地版现有显示器、虚拟显示器和串流流程之上增加“按 Sunshine APP 选择显示方案”。新工作区开始开发、同步、构建或发布前，应阅读本文件、[`app-display-profile.md`](app-display-profile.md) 和 [`build-release-notes.md`](build-release-notes.md)。
 
 ## 项目边界
 
