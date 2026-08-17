@@ -635,7 +635,7 @@ namespace nvhttp {
 
     if (!wait_for_global_cancel_cleanup()) {
       tree.put("root.gamesession", 0);
-      set_sunshine_error(
+      stream_start::set_sunshine_error(
         tree,
         503,
         "The previous app is still being stopped.",
@@ -820,7 +820,7 @@ namespace nvhttp {
 
     if (!wait_for_global_cancel_cleanup()) {
       tree.put("root.resume", 0);
-      set_sunshine_error(
+      stream_start::set_sunshine_error(
         tree,
         503,
         "The previous app is still being stopped.",
