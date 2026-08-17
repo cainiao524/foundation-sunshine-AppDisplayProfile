@@ -391,7 +391,8 @@ namespace display_device {
   session_t::configure_result_t
   session_t::configure_display(const config::video_t &config,
     const rtsp_stream::launch_session_t &session,
-    bool is_reconfigure) {
+    bool is_reconfigure,
+    const display_intent_t *resolved_intent) {
     std::lock_guard lock { mutex };
 
     // 恢复运行中的应用时可能换成另一个客户端。取消旧的延迟恢复任务，
@@ -405,7 +406,7 @@ namespace display_device {
       }
     }
 
-    auto parsed_config = make_parsed_config(config, session);
+    auto parsed_config = make_parsed_config(config, session, resolved_intent);
     if (!parsed_config) {
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
       restore_state_impl(revert_reason_e::config_cleanup);

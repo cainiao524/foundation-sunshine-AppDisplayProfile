@@ -7,6 +7,7 @@
 // lib includes
 #include <boost/atomic.hpp>
 // local includes
+#include "parsed_config.h"
 #include "settings.h"
 #include "vdd_utils.h"
 
@@ -116,7 +117,11 @@ namespace display_device {
      * ```
      */
     configure_result_t
-    configure_display(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure = false);
+    configure_display(
+      const config::video_t &config,
+      const rtsp_stream::launch_session_t &session,
+      bool is_reconfigure = false,
+      const display_intent_t *resolved_intent = nullptr);
 
     /**
      * @brief Revert the display configuration and restore the previous state.

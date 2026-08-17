@@ -221,6 +221,9 @@ namespace display_device {
    * ```
    */
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session);
+  make_parsed_config(
+    const config::video_t &config,
+    const rtsp_stream::launch_session_t &session,
+    const display_intent_t *resolved_intent = nullptr);
 
 }  // namespace display_device

@@ -202,7 +202,8 @@ namespace nvhttp::stream_start {
       auto_recovery_result_t &recovery_result,
       const video::probe_target_t &probe_target,
       bool &probe_matches_display_state,
-      bool refresh_vdd_probe_target = false) {
+      bool refresh_vdd_probe_target = false,
+      const display_device::display_intent_t *resolved_intent = nullptr) {
       using result_e = display_device::session_t::configure_result_t::result_e;
       if (display_result.result != result_e::deferred_retry) {
         return false;
@@ -224,7 +225,11 @@ namespace nvhttp::stream_start {
       for (const auto delay : retry_delays) {
         std::this_thread::sleep_for(delay);
         probe_matches_display_state = false;
-        display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
+        display_result = display_device::session_t::get().configure_display(
+          config::video,
+          launch_session,
+          is_reconfigure,
+          resolved_intent);
 
         if (display_result.result == result_e::deferred_retry) {
           continue;
@@ -688,7 +693,11 @@ namespace nvhttp::stream_start {
 
     // Display configuration can change the active capture target, so probe
     // encoders only after the display stack has settled.
-    auto display_result = display_device::session_t::get().configure_display(config::video, launch_session, is_reconfigure);
+    auto display_result = display_device::session_t::get().configure_display(
+      config::video,
+      launch_session,
+      is_reconfigure,
+      &intent);
     auto outcome = classify_configure_result(display_result.result);
     if (display_result) {
       hdr::adopt_vdd_calibration_if_needed(launch_session);
@@ -721,7 +730,8 @@ namespace nvhttp::stream_start {
             recovery_result,
             probe_target,
             probe_matches_display_state,
-            intent.target == display_device::display_intent_t::target_e::vdd)) {
+            intent.target == display_device::display_intent_t::target_e::vdd,
+            &intent)) {
         set_auto_recovery_status(tree, recovery_result);
         return true;
       }

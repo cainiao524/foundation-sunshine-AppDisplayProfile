@@ -742,11 +742,14 @@ namespace display_device {
   }
 
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+  make_parsed_config(
+    const config::video_t &config,
+    const rtsp_stream::launch_session_t &session,
+    const display_intent_t *resolved_intent) {
     parsed_config_t parsed_config;
 
     // 显示器目标、是否为VDD、以及device_prep统一在此解析
-    const auto intent = resolve_display_intent(config, session);
+    const auto intent = resolved_intent ? *resolved_intent : resolve_display_intent(config, session);
     if (intent.target == display_intent_t::target_e::unavailable) {
       return boost::none;
     }

@@ -9,8 +9,10 @@
 #include <algorithm>
 #include <array>
 #include <chrono>
+#include <condition_variable>
 #include <filesystem>
 #include <memory>
+#include <mutex>
 #include <shared_mutex>
 #include <sstream>
 #include <string>
@@ -84,7 +86,46 @@ namespace nvhttp {
   };
 
   boost::atomic<uint32_t> session_id_counter {0};
-  static boost::atomic_flag global_cancel_pending = BOOST_ATOMIC_FLAG_INIT;
+  static std::condition_variable global_cancel_cv;
+  static std::mutex global_cancel_mutex;
+  static bool global_cancel_pending = false;
+
+  bool
+  wait_for_global_cancel_cleanup() {
+    constexpr auto timeout = 10s;
+    std::unique_lock lock { global_cancel_mutex };
+    if (!global_cancel_pending) {
+      return true;
+    }
+
+    BOOST_LOG(info) << "Waiting for global app cancel cleanup before starting the next session"sv;
+    const bool completed = global_cancel_cv.wait_for(lock, timeout, []() {
+      return !global_cancel_pending;
+    });
+    if (!completed) {
+      BOOST_LOG(error) << "Timed out waiting for global app cancel cleanup"sv;
+    }
+    return completed;
+  }
+
+  bool
+  begin_global_cancel() {
+    std::lock_guard lock { global_cancel_mutex };
+    if (global_cancel_pending) {
+      return false;
+    }
+    global_cancel_pending = true;
+    return true;
+  }
+
+  void
+  finish_global_cancel() {
+    {
+      std::lock_guard lock { global_cancel_mutex };
+      global_cancel_pending = false;
+    }
+    global_cancel_cv.notify_all();
+  }
 
   static tls_client_identity_store_t tls_client_identities;
 
@@ -592,6 +633,21 @@ namespace nvhttp {
       }
     });
 
+    if (!wait_for_global_cancel_cleanup()) {
+      tree.put("root.gamesession", 0);
+      set_sunshine_error(
+        tree,
+        503,
+        "The previous app is still being stopped.",
+        "APP_SWITCH_CLEANUP_TIMEOUT",
+        "Wait for the previous stream to finish stopping, then try again.",
+        "retry_app_launch",
+        "session",
+        "app_switch",
+        true);
+      return;
+    }
+
     auto args = request->parse_query_string();
     if (
       args.find("rikey"s) == std::end(args) ||
@@ -762,6 +818,21 @@ namespace nvhttp {
       }
     });
 
+    if (!wait_for_global_cancel_cleanup()) {
+      tree.put("root.resume", 0);
+      set_sunshine_error(
+        tree,
+        503,
+        "The previous app is still being stopped.",
+        "APP_SWITCH_CLEANUP_TIMEOUT",
+        "Wait for the previous stream to finish stopping, then try again.",
+        "retry_app_resume",
+        "session",
+        "app_switch",
+        true);
+      return;
+    }
+
     auto current_appid = proc::proc.running();
     if (current_appid == 0) {
       tree.put("root.resume", 0);
@@ -909,37 +980,47 @@ namespace nvhttp {
 
     // GameStream 的 /cancel 表示退出当前应用，而普通断开由 RTSP/控制通道处理。
     // 清理可能需要等待编码器和应用退出，不能阻塞 NVHTTP 工作线程。
-    if (!global_cancel_pending.test_and_set(boost::memory_order_acq_rel)) {
+    if (begin_global_cancel()) {
       BOOST_LOG(info) << "Global app cancel accepted; stopping all streaming sessions asynchronously"sv;
-      rtsp_stream::terminate_sessions_async(stream::session::stop_reason_e::client_cancel, []() {
-        auto clear_pending = util::fail_guard([]() {
-          global_cancel_pending.clear(boost::memory_order_release);
-        });
+      try {
+        rtsp_stream::terminate_sessions_async(stream::session::stop_reason_e::client_cancel, []() {
+          auto clear_pending = util::fail_guard([]() {
+            finish_global_cancel();
+          });
 
-        try {
-          if (proc::proc.running() > 0) {
-            proc::proc.terminate();
+          try {
+            if (proc::proc.running() > 0) {
+              proc::proc.terminate();
+            }
           }
-        }
-        catch (const std::exception &e) {
-          BOOST_LOG(error) << "Failed to terminate the running application during app cancel: "sv << e.what();
-        }
-        catch (...) {
-          BOOST_LOG(error) << "Failed to terminate the running application during app cancel"sv;
-        }
+          catch (const std::exception &e) {
+            BOOST_LOG(error) << "Failed to terminate the running application during app cancel: "sv << e.what();
+          }
+          catch (...) {
+            BOOST_LOG(error) << "Failed to terminate the running application during app cancel"sv;
+          }
 
-        try {
-          display_device::session_t::get().restore_state();
-        }
-        catch (const std::exception &e) {
-          BOOST_LOG(error) << "Failed to restore display state during app cancel: "sv << e.what();
-        }
-        catch (...) {
-          BOOST_LOG(error) << "Failed to restore display state during app cancel"sv;
-        }
+          try {
+            display_device::session_t::get().restore_state();
+          }
+          catch (const std::exception &e) {
+            BOOST_LOG(error) << "Failed to restore display state during app cancel: "sv << e.what();
+          }
+          catch (...) {
+            BOOST_LOG(error) << "Failed to restore display state during app cancel"sv;
+          }
 
-        BOOST_LOG(info) << "Global app cancel cleanup finished"sv;
-      });
+          BOOST_LOG(info) << "Global app cancel cleanup finished"sv;
+        });
+      }
+      catch (const std::exception &e) {
+        finish_global_cancel();
+        BOOST_LOG(error) << "Failed to schedule global app cancel cleanup: "sv << e.what();
+      }
+      catch (...) {
+        finish_global_cancel();
+        BOOST_LOG(error) << "Failed to schedule global app cancel cleanup"sv;
+      }
     }
     else {
       BOOST_LOG(debug) << "Global app cancel is already in progress"sv;
