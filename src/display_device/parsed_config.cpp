@@ -178,7 +178,8 @@ namespace display_device {
      */
     bool
     parse_resolution_option(const config::video_t &config, const rtsp_stream::launch_session_t &session, parsed_config_t &parsed_config) {
-      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(config.resolution_change) };
+      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(
+        session.resolution_change_override >= 0 ? session.resolution_change_override : config.resolution_change) };
       switch (resolution_option) {
         case parsed_config_t::resolution_change_e::automatic: {
           if (!session.enable_sops) {
@@ -202,12 +203,15 @@ namespace display_device {
           break;
         }
         case parsed_config_t::resolution_change_e::manual: {
-          if (!session.enable_sops) {
+          if (!session.enable_sops && session.display_target_override < 0) {
             BOOST_LOG(warning) << "Sunshine is configured to change resolution manually, but the \"Optimize game settings\" is not set in the client! Resolution will not be changed.";
             parsed_config.resolution = boost::none;
           }
           else {
-            if (!parse_resolution_string(config.manual_resolution, parsed_config.resolution)) {
+            const auto &manual_resolution = session.manual_resolution_override.empty() ?
+                                              config.manual_resolution :
+                                              session.manual_resolution_override;
+            if (!parse_resolution_string(manual_resolution, parsed_config.resolution)) {
               BOOST_LOG(error) << "Failed to parse manual resolution string!";
               return false;
             }
@@ -245,7 +249,8 @@ namespace display_device {
      */
     bool
     parse_refresh_rate_option(const config::video_t &config, const rtsp_stream::launch_session_t &session, parsed_config_t &parsed_config) {
-      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(config.refresh_rate_change) };
+      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(
+        session.refresh_rate_change_override >= 0 ? session.refresh_rate_change_override : config.refresh_rate_change) };
       switch (refresh_rate_option) {
         case parsed_config_t::refresh_rate_change_e::automatic: {
           if (session.fps >= 0) {
@@ -258,7 +263,10 @@ namespace display_device {
           break;
         }
         case parsed_config_t::refresh_rate_change_e::manual: {
-          if (!parse_refresh_rate_string(config.manual_refresh_rate, parsed_config.refresh_rate)) {
+          const auto &manual_refresh_rate = session.manual_refresh_rate_override.empty() ?
+                                               config.manual_refresh_rate :
+                                               session.manual_refresh_rate_override;
+          if (!parse_refresh_rate_string(manual_refresh_rate, parsed_config.refresh_rate)) {
             BOOST_LOG(error) << "Failed to parse manual refresh rate string!";
             return false;
           }
@@ -298,8 +306,10 @@ namespace display_device {
       constexpr auto resolution_only_remapping { "resolution_only" };
       constexpr auto refresh_rate_only_remapping { "refresh_rate_only" };
 
-      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(config.resolution_change) };
-      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(config.refresh_rate_change) };
+      const auto resolution_option { static_cast<parsed_config_t::resolution_change_e>(
+        session.resolution_change_override >= 0 ? session.resolution_change_override : config.resolution_change) };
+      const auto refresh_rate_option { static_cast<parsed_config_t::refresh_rate_change_e>(
+        session.refresh_rate_change_override >= 0 ? session.refresh_rate_change_override : config.refresh_rate_change) };
 
       // Copy only the remapping values that we can actually use with our configuration options
       std::vector<config::video_t::display_mode_remapping_t> remapping_values;
@@ -524,6 +534,21 @@ namespace display_device {
       session.use_vdd
     };
 
+    if (session.display_target_override >= 0) {
+      request.source = display_request_t::source_e::config;
+      request.use_vdd = session.display_target_override == 1;
+      if (request.use_vdd) {
+        request.device_id.clear();
+      }
+      else {
+        request.device_id = session.app_display_output_name_override;
+        if (request.device_id.empty()) {
+          request.device_id = config.output_name;
+        }
+      }
+      return request;
+    }
+
     if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
       const std::string client_display_name = it->to_string();
       if (!client_display_name.empty()) {
@@ -612,6 +637,19 @@ namespace display_device {
         return vdd_prep_e::display_off;
       default:
         return vdd_prep_e::no_operation;
+    }
+  }
+
+  parsed_config_t::vdd_prep_e
+  parsed_config_t::resolve_vdd_prep(int client_mode, device_prep_e unified_fallback) {
+    switch (static_cast<vdd_prep_e>(client_mode)) {
+      case vdd_prep_e::no_operation:
+      case vdd_prep_e::vdd_as_primary:
+      case vdd_prep_e::vdd_as_secondary:
+      case vdd_prep_e::display_off:
+        return static_cast<vdd_prep_e>(client_mode);
+      default:
+        return to_vdd_prep(unified_fallback);
     }
   }
 
@@ -710,7 +748,9 @@ namespace display_device {
     // 标记为VDD模式，从统一的 device_prep 映射到内部 vdd_prep
     // device_prep 保留原始统一值（用于 apply_config 中的 display_may_change 等判断）
     parsed_config.use_vdd = true;
-    parsed_config.vdd_prep = parsed_config_t::to_vdd_prep(parsed_config.device_prep);
+    parsed_config.vdd_prep = parsed_config_t::resolve_vdd_prep(
+      session.custom_vdd_screen_mode,
+      parsed_config.device_prep);
     BOOST_LOG(debug) << "VDD模式：统一值 " << static_cast<int>(parsed_config.device_prep)
                      << " 映射为 vdd_prep=" << static_cast<int>(parsed_config.vdd_prep);
 

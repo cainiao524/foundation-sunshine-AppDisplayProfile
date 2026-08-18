@@ -152,6 +152,12 @@ namespace display_device {
     to_vdd_prep(device_prep_e unified);
 
     /**
+     * @brief Resolve the dedicated VDD layout sent by Foundation Moonlight.
+     */
+    static vdd_prep_e
+    resolve_vdd_prep(int client_mode, device_prep_e unified_fallback);
+
+    /**
      * @brief Map unified device_prep_e to internal device_prep_e for physical display mode.
      */
     static device_prep_e

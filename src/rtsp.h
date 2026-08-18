@@ -6,6 +6,7 @@
 
 #include <atomic>
 #include <cstddef>
+#include <string>
 #include <string_view>
 
 #include <boost/process/v1.hpp>
@@ -51,7 +52,14 @@ namespace rtsp_stream {
     bool enable_sops;
     bool enable_mic;
     bool use_vdd;
-    int custom_screen_mode;
+    int custom_screen_mode {-1};
+    int custom_vdd_screen_mode {-1};
+    int display_target_override {-1};  ///< -1=inherit, 0=physical, 1=virtual
+    int resolution_change_override {-1};
+    int refresh_rate_change_override {-1};
+    std::string manual_resolution_override;
+    std::string manual_refresh_rate_override;
+    std::string app_display_output_name_override;
     float max_nits;
     float min_nits;
     float max_full_nits;

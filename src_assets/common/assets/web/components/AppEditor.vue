@@ -144,6 +144,85 @@
                 </FormField>
               </AccordionItem>
 
+              <AccordionItem
+                v-if="isWindows"
+                id="displayProfile"
+                icon="fa-display"
+                :title="t('config.display_device_options')"
+                parent-id="appFormAccordion"
+              >
+                <FormField
+                  id="appDisplayTarget"
+                  :label="t('config.output_name_windows')"
+                  :hint="'未选择时完全保留客户端的显示器、拓扑和布局请求。'"
+                >
+                  <select
+                    id="appDisplayTarget"
+                    class="form-select form-control-enhanced"
+                    v-model="formData['display-target']"
+                  >
+                    <option value="">跟随客户端（Desktop）</option>
+                    <option value="physical">物理显示器</option>
+                    <option value="virtual">{{ t('config.output_name_vdd_option') }}</option>
+                  </select>
+                </FormField>
+
+                <template v-if="formData['display-target']">
+                  <DisplayPreparationPicker v-model="formData['display-device-prep']" />
+
+                  <FormField
+                    v-if="formData['display-target'] === 'physical'"
+                    id="appDisplayOutput"
+                    :label="t('config.output_name_windows')"
+                    :hint="t('config.output_name_desc')"
+                  >
+                    <input
+                      id="appDisplayOutput"
+                      type="text"
+                      class="form-control form-control-enhanced monospace"
+                      v-model.trim="formData['display-output-name']"
+                      placeholder="留空使用主显示器"
+                    />
+                  </FormField>
+
+                  <div class="display-rule-grid">
+                    <DisplayRuleRadioGroup
+                      v-model="appResolutionRule"
+                      name="app_resolution_change"
+                      label-key="config.resolution_change"
+                      option-key-prefix="config.resolution_change_"
+                      :options="['no_operation', 'automatic', 'manual']"
+                    >
+                      <div class="nested-setting mt-2" v-if="appResolutionRule === 'manual'">
+                        <input
+                          type="text"
+                          class="form-control"
+                          v-model.trim="formData['display-resolution']"
+                          placeholder="1920x1080"
+                        />
+                      </div>
+                    </DisplayRuleRadioGroup>
+
+                    <DisplayRuleRadioGroup
+                      v-model="appRefreshRateRule"
+                      name="app_refresh_rate_change"
+                      label-key="config.refresh_rate_change"
+                      option-key-prefix="config.refresh_rate_change_"
+                      :options="['no_operation', 'automatic', 'manual']"
+                    >
+                      <div class="nested-setting mt-2" v-if="appRefreshRateRule === 'manual'">
+                        <input
+                          type="text"
+                          class="form-control"
+                          v-model.trim="formData['display-refresh-rate']"
+                          placeholder="60"
+                        />
+                      </div>
+                    </DisplayRuleRadioGroup>
+                  </div>
+                </template>
+              </AccordionItem>
+
               <AccordionItem id="commands" icon="fa-terminal" :title="t('apps.command_settings')" parent-id="appFormAccordion">
                 <div class="form-group-enhanced">
                   <div class="form-check form-switch">
@@ -298,7 +377,7 @@
 </template>
 
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, provide } from 'vue'
 import { useI18n } from 'vue-i18n'
 import { validateField as validateFieldHelper, validateAppForm } from '../utils/validation.js'
 import { nanoid } from 'nanoid'
@@ -307,6 +386,8 @@ import ImageSelector from './ImageSelector.vue'
 import AccordionItem from './AccordionItem.vue'
 import FormField from './FormField.vue'
 import CheckboxField from './CheckboxField.vue'
+import DisplayPreparationPicker from '../configs/tabs/audiovideo/DisplayPreparationPicker.vue'
+import DisplayRuleRadioGroup from '../configs/tabs/audiovideo/DisplayRuleRadioGroup.vue'
 import { createFileSelector } from '../utils/fileSelection.js'
 import { apiPostJson } from '../utils/apiFetch.js'
 import { deepClone } from '../utils/helpers.js'
@@ -327,6 +408,13 @@ const DEFAULT_FORM_DATA = Object.freeze({
   detached: [],
   'image-path': '',
   'working-dir': '',
+  'display-target': '',
+  'display-device-prep': 'ensure_active',
+  'display-resolution-mode': 'client',
+  'display-resolution': '',
+  'display-refresh-rate-mode': 'client',
+  'display-refresh-rate': '',
+  'display-output-name': '',
 })
 
 const FIELD_VALIDATION_MAP = Object.freeze({
@@ -347,6 +435,7 @@ const props = defineProps({
 const emit = defineEmits(['close', 'save-app'])
 
 const { t } = useI18n()
+provide('platform', computed(() => props.platform))
 
 const modalElement = ref(null)
 const fileInput = ref(null)
@@ -358,6 +447,26 @@ const modalInstance = ref(null)
 const fileSelector = ref(null)
 
 const isWindows = computed(() => props.platform === 'windows')
+const appResolutionRule = computed({
+  get: () => ({
+    no_operation: 'no_operation',
+    client: 'automatic',
+    fixed: 'manual',
+  })[formData.value?.['display-resolution-mode']] || 'automatic',
+  set: (value) => {
+    formData.value['display-resolution-mode'] = value === 'no_operation' ? 'no_operation' : value === 'manual' ? 'fixed' : 'client'
+  },
+})
+const appRefreshRateRule = computed({
+  get: () => ({
+    no_operation: 'no_operation',
+    client: 'automatic',
+    fixed: 'manual',
+  })[formData.value?.['display-refresh-rate-mode']] || 'automatic',
+  set: (value) => {
+    formData.value['display-refresh-rate-mode'] = value === 'no_operation' ? 'no_operation' : value === 'manual' ? 'fixed' : 'client'
+  },
+})
 const isNewApp = computed(() => !props.app || props.app.index === -1)
 const isFormValid = computed(() => {
   // name 字段是必填的，必须验证通过
@@ -614,6 +723,19 @@ const saveApp = async () => {
   }
 
   const editedApp = { ...formData.value }
+  if (!editedApp['display-target']) {
+    for (const key of [
+      'display-target',
+      'display-device-prep',
+      'display-resolution-mode',
+      'display-resolution',
+      'display-refresh-rate-mode',
+      'display-refresh-rate',
+      'display-output-name',
+    ]) {
+      delete editedApp[key]
+    }
+  }
   if (editedApp['image-path']) {
     editedApp['image-path'] = editedApp['image-path'].toString().replace(/"/g, '')
   }

@@ -265,6 +265,7 @@ namespace nvhttp {
     launch_session->enable_hdr = util::from_view(get_arg(args, "hdrMode", "0"));
     launch_session->use_vdd = util::from_view(get_arg(args, "useVdd", "0"));
     launch_session->custom_screen_mode = util::from_view(get_arg(args, "customScreenMode", "-1"));
+    launch_session->custom_vdd_screen_mode = util::from_view(get_arg(args, "customVddScreenMode", "-1"));
     launch_session->max_nits = std::stof(get_arg(args, "maxBrightness", "1000"));
     launch_session->min_nits = std::stof(get_arg(args, "minBrightness", "0.001"));
     launch_session->max_full_nits = std::stof(get_arg(args, "maxAverageBrightness", "1000"));
@@ -609,6 +610,7 @@ namespace nvhttp {
     host_audio = util::from_view(get_arg(args, "localAudioPlayMode"));
     const auto launch_session = make_launch_session(host_audio, args);
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    proc::proc.apply_app_display_profile(appid, *launch_session);
     const auto fingerprint_match = client_fingerprint::match_client(args);
     launch_session->highly_suspected_unknown_client = fingerprint_match.suspicious;
 
@@ -776,6 +778,7 @@ namespace nvhttp {
     }
     const auto launch_session = make_launch_session(host_audio, args);
     launch_session->rtsp_peer_address = net::addr_to_normalized_string(request->remote_endpoint().address());
+    proc::proc.apply_app_display_profile(current_appid, *launch_session);
     const auto fingerprint_match = client_fingerprint::match_client(args);
     launch_session->highly_suspected_unknown_client = fingerprint_match.suspicious;
 

@@ -24,6 +24,7 @@
 
 #include "config.h"
 #include "crypto.h"
+#include "display_device/parsed_config.h"
 #include "display_device/session.h"
 #include "httpcommon.h"
 #include "logging.h"
@@ -309,6 +310,54 @@ namespace proc {
     fg.disable();
 
     return 0;
+  }
+
+  bool
+  proc_t::apply_app_display_profile(int app_id, rtsp_stream::launch_session_t &launch_session) const {
+    const auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id](const auto &app) {
+      return app.id == std::to_string(app_id);
+    });
+    if (iter == _apps.end() || iter->display_target < 0) {
+      return false;
+    }
+
+    const auto &app = *iter;
+    launch_session.appid = app_id;
+    launch_session.display_target_override = app.display_target;
+    launch_session.use_vdd = app.display_target == 1;
+    launch_session.custom_vdd_screen_mode = -1;
+    launch_session.custom_screen_mode = app.display_device_prep >= 0 ?
+                                          app.display_device_prep :
+                                          static_cast<int>(display_device::parsed_config_t::device_prep_e::ensure_active);
+
+    // A configured APP profile follows the client's display mode by default.
+    launch_session.resolution_change_override =
+      app.display_resolution_mode >= 0 ?
+        app.display_resolution_mode :
+        static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic);
+    launch_session.manual_resolution_override = app.display_resolution;
+    launch_session.refresh_rate_change_override =
+      app.display_refresh_rate_mode >= 0 ?
+        app.display_refresh_rate_mode :
+        static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::automatic);
+    launch_session.manual_refresh_rate_override = app.display_refresh_rate;
+
+    launch_session.app_display_output_name_override = app.display_output_name;
+    if (app.display_target == 0 && !app.display_output_name.empty()) {
+      launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = app.display_output_name;
+    }
+    else {
+      // An APP profile must not inherit a client-selected display by accident.
+      launch_session.env.erase("SUNSHINE_CLIENT_DISPLAY_NAME");
+    }
+    launch_session.env["SUNSHINE_CLIENT_USE_VDD"] = launch_session.use_vdd ? "true" : "false";
+    launch_session.env["SUNSHINE_CLIENT_CUSTOM_SCREEN_MODE"] = std::to_string(launch_session.custom_screen_mode);
+    launch_session.env["SUNSHINE_CLIENT_CUSTOM_VDD_SCREEN_MODE"] = "-1";
+
+    BOOST_LOG(info) << "Applied APP display profile [app=" << app.name
+                    << ", target=" << app.display_target
+                    << ", prep=" << launch_session.custom_screen_mode << ']';
+    return true;
   }
 
   int
@@ -825,6 +874,13 @@ namespace proc {
         auto wait_all = app_node.get_optional<bool>("wait-all"s);
         auto exit_timeout = app_node.get_optional<int>("exit-timeout"s);
         auto mouse_mode = app_node.get_optional<int>("mouse-mode"s);
+        auto display_target = app_node.get_optional<std::string>("display-target"s);
+        auto display_device_prep = app_node.get_optional<std::string>("display-device-prep"s);
+        auto display_resolution_mode = app_node.get_optional<std::string>("display-resolution-mode"s);
+        auto display_resolution = app_node.get_optional<std::string>("display-resolution"s);
+        auto display_refresh_rate_mode = app_node.get_optional<std::string>("display-refresh-rate-mode"s);
+        auto display_refresh_rate = app_node.get_optional<std::string>("display-refresh-rate"s);
+        auto display_output_name = app_node.get_optional<std::string>("display-output-name"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -906,6 +962,40 @@ namespace proc {
         ctx.auto_detach = auto_detach.value_or(true);
         ctx.wait_all = wait_all.value_or(true);
         ctx.mouse_mode = mouse_mode.value_or(0);
+        if (display_target && *display_target == "physical"sv) {
+          ctx.display_target = 0;
+        }
+        else if (display_target && *display_target == "virtual"sv) {
+          ctx.display_target = 1;
+        }
+
+        if (display_device_prep && !display_device_prep->empty()) {
+          ctx.display_device_prep = display_device::parsed_config_t::device_prep_from_view(*display_device_prep);
+        }
+
+        if (display_resolution_mode && *display_resolution_mode == "no_operation"sv) {
+          ctx.display_resolution_mode = static_cast<int>(display_device::parsed_config_t::resolution_change_e::no_operation);
+        }
+        else if (display_resolution_mode && *display_resolution_mode == "client"sv) {
+          ctx.display_resolution_mode = static_cast<int>(display_device::parsed_config_t::resolution_change_e::automatic);
+        }
+        else if (display_resolution_mode && *display_resolution_mode == "fixed"sv) {
+          ctx.display_resolution_mode = static_cast<int>(display_device::parsed_config_t::resolution_change_e::manual);
+          ctx.display_resolution = display_resolution.value_or("");
+        }
+
+        if (display_refresh_rate_mode && *display_refresh_rate_mode == "no_operation"sv) {
+          ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::no_operation);
+        }
+        else if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
+          ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::automatic);
+        }
+        else if (display_refresh_rate_mode && *display_refresh_rate_mode == "fixed"sv) {
+          ctx.display_refresh_rate_mode = static_cast<int>(display_device::parsed_config_t::refresh_rate_change_e::manual);
+          ctx.display_refresh_rate = display_refresh_rate.value_or("");
+        }
+
+        ctx.display_output_name = display_output_name.value_or("");
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
 
         auto possible_ids = calculate_app_id(name, ctx.image_path, i++);
