@@ -360,19 +360,17 @@ jobs:
           mkdir -p artifacts
           cd build
 
-          # Package the Inno Setup installer and portable ZIP.
-          # Install into the staging directory first.
+          # Keep installer and portable outputs isolated. The installer must
+          # always come from the Foundation Inno Setup definition, never CPack.
+          rm -rf inno_staging inno_artifacts portable_artifacts
+          mkdir -p inno_artifacts portable_artifacts
           cmake --install . --prefix ./inno_staging
-          
-          # Run the Inno Setup compiler.
-          "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" sunshine_installer.iss
-          
-          # Generate the portable ZIP.
-          cpack -G ZIP --config ./CPackConfig.cmake --verbose
+          INNO_OUTPUT="$(cygpath -w "$(pwd)/inno_artifacts")"
+          MSYS2_ARG_CONV_EXCL='/O' "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/O${INNO_OUTPUT}" sunshine_installer.iss
+          cpack -G ZIP -B ./portable_artifacts --config ./CPackConfig.cmake --verbose
 
-          # move
-          mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
-          mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
+          mv ./inno_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
+          mv ./portable_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
 
       - name: Rename release assets
         shell: msys2 {0}

@@ -1,9 +1,10 @@
-# 本 Fork 的项目级开发指令
+# Sunshine App Display Profile 项目级开发指令
 
 本仓库不是原版 Foundation Sunshine 的纯镜像。开始任何开发、同步、构建或发布工作前，必须完整阅读：
 
 1. [`docs/downstream/project-handoff.md`](docs/downstream/project-handoff.md)
 2. [`docs/downstream/app-display-profile.md`](docs/downstream/app-display-profile.md)
+3. [`docs/downstream/build-release-notes.md`](docs/downstream/build-release-notes.md)
 
 ## 不可偏离的方向
 
@@ -13,14 +14,24 @@
 - 需要保证同一 Moonlight 设备通过“退出运行中的应用并运行此应用”在不同 APP 显示方案间切换。
 - 当前不开展自有代码签名或驱动重新签名。不得替换、修改或伪造上游随包驱动的签名文件。
 
+## 已确认的显示行为
+
+- 未配置 APP 显示方案的 `Desktop`、Steam 和其他入口，严格保留 Moonlight 客户端与全局显示请求。
+- 配置 APP 显示方案的入口由服务端覆盖客户端显示目标和布局，但仍可按配置采用客户端分辨率、刷新率和 HDR 请求。
+- `ensure_secondary` 必须保持物理显示器为主屏、VDD 为副屏；只在应用拓扑后的最终校验失败时校正一次主屏。
+- `ensure_primary` 必须保持 VDD 为主屏、物理显示器为活动副屏；断开恢复以创建 VDD 前的物理拓扑为准。
+- `ensure_only_display` 只保留目标 VDD；不得用修改 `Desktop` 默认行为来规避显示切换问题。
+- VDD 身份固定使用基地版原生规则 `config::video.vdd_reuse ? "shared_vdd" : client_id`，不得按 APP 生成新身份。
+
 ## 分支与安全边界
 
 - GitHub 默认分支和实际开发分支：`feature/app-display-profile`。
-- `origin` 应指向 `cainiao524/foundation-sunshine`；`upstream` 应指向 `AlkaidLab/foundation-sunshine`。
+- `origin` 应指向 `cainiao524/foundation-sunshine-AppDisplayProfile`；`upstream` 应指向 `AlkaidLab/foundation-sunshine`。
 - `master` 是上游镜像分支，不用于开发定制功能。由于历史上同步过开发版源码，迁移期间禁止为了对齐旧正式版而回退或强推它。
 - 上游合并发生冲突时必须停止并人工处理；禁止强制覆盖功能分支。
 - 不得覆盖已有标签或正式发布。创建标签、正式发布页、签名、推送或改变发布策略前，确认用户已经明确授权。
 - 工作区若有来源不明的改动，先确认范围，禁止把无关文件一起提交。
+- `archive/`、`logs_archive/`、`build-native-current/`、`build-package-current/` 和 `artifacts/` 都是本地归档或构建产物，不得提交。
 
 ## 修改与验证要求
 
@@ -30,6 +41,15 @@
 - 原生或打包改动使用 `scripts/build-app-display-package.ps1` 或等价云端流水线验证，并运行原生测试。
 - 工作流改动必须通过 `actionlint` 和 `git diff --check`，再进行一次真实的 GitHub Actions 手动检查。
 - 自动构建只负责生成“操作”页面产物；除非用户另行授权，不自动创建正式发布页。
+
+## Windows 打包与正式发布
+
+- 安装版固定使用基地版 `sunshine_installer.iss` 通过 Inno Setup 生成；CPack 只生成便携 ZIP，绝不能把 CPack 的可执行文件当作安装器发布。
+- 每次打包前清空 `inno_staging`、`inno_artifacts` 和 `portable_artifacts`，避免旧网页资源或旧二进制混入新包。
+- 正式产物只包含安装版、便携版、`SHA256SUMS.txt` 和 `checksums.json`；校验文件必须在最终重命名后生成。
+- 发布前检查目标标签和 Release 均不存在，禁止覆盖已有标签、正式发布或预发布。
+- 手动发布从 `feature/app-display-profile` 触发 `.github/workflows/main.yml`，`source-ref` 使用该功能分支；完整等待 `Setup Release`、VDD 冒烟测试、Windows 编译、原生测试、打包、产物上传和 Release 创建。
+- 只有整次工作流成功且正式 Release 可见，才可以报告发布完成。失败时读取失败步骤并修复，禁止并行重复触发来碰运气。
 
 ## 上游正式版同步与云端构建操作
 

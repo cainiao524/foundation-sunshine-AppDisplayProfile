@@ -1082,6 +1082,49 @@ namespace display_device {
         return false;
       }
 
+      if (vdd_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary && !original_primary_id.empty()) {
+        // Windows may accept the topology ordering but keep the newly-created VDD
+        // as PRIMARY. Correct that state only when the post-apply verification
+        // shows that the physical display did not become primary.
+        const auto ensure_physical_primary = [&]() {
+          const auto devices = enum_available_devices();
+          const auto physical_it = devices.find(original_primary_id);
+          const auto vdd_it = devices.find(vdd_device_id);
+          if (physical_it == devices.end() || vdd_it == devices.end()) {
+            return false;
+          }
+
+          if (physical_it->second.device_state == device_state_e::primary &&
+              vdd_it->second.device_state != device_state_e::primary) {
+            return true;
+          }
+
+          return set_as_primary_device(original_primary_id);
+        };
+
+        if (!retry_with_backoff(ensure_physical_primary, RetryConfig {
+              .max_attempts = 3,
+              .initial_delay = 100ms,
+              .max_delay = 500ms,
+              .context = "VDD secondary primary verification"
+            })) {
+          BOOST_LOG(error) << "VDD副屏模式未能确认物理显示器为主屏";
+          return false;
+        }
+
+        const auto final_devices = enum_available_devices();
+        const auto physical_it = final_devices.find(original_primary_id);
+        const auto vdd_it = final_devices.find(vdd_device_id);
+        if (physical_it == final_devices.end() || vdd_it == final_devices.end() ||
+            physical_it->second.device_state != device_state_e::primary ||
+            vdd_it->second.device_state == device_state_e::primary) {
+          BOOST_LOG(error) << "VDD副屏模式最终主屏校验失败: " << to_string(final_devices);
+          return false;
+        }
+
+        BOOST_LOG(info) << "VDD副屏模式已确认物理显示器为主屏，VDD为副屏";
+      }
+
       BOOST_LOG(info) << "成功应用vdd_prep设置";
       BOOST_LOG(debug) << "vdd_prep 执行后显示设备: " << to_string(enum_available_devices());
       return true;

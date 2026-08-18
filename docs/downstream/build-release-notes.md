@@ -4,6 +4,22 @@
 
 ## Windows 本地构建
 
+### 基地版安装器打包规则
+
+- 固定使用 `scripts/build-app-display-package.ps1` 生成基地版 Inno Setup 安装器；CPack 只用于生成便携 ZIP，不用于生成安装器。
+- 每次安装前都会清空 `inno_staging`，防止旧的带哈希网页资源混入新包。
+- Inno 安装器输出在 `build-package-current/inno_artifacts`，便携包输出在 `build-package-current/portable_artifacts`；不要从旧的 `cpack_artifacts` 目录取安装器。
+- 发布前必须确认暂存目录中只有当前的 `AppEditor-*.js`、`NewDisplayOutputSelector-*.js` 资源，并检查 `artifacts/SHA256SUMS.txt` 与实际文件一致。
+
+推荐命令：
+
+```powershell
+.\scripts\build-app-display-package.ps1 `
+  -BuildAlias C:\CodexSunshineAppDisplay `
+  -BuildDirectory build-package-current `
+  -PublisherName cainiao524
+```
+
 ### 工具链
 
 - 使用 MSYS2 `UCRT64` 环境，不要混用 `MINGW64`、MSVC 和普通 PowerShell 中的同名工具。
@@ -62,6 +78,10 @@ gh workflow run main.yml `
 ```
 
 不要把短提交号直接作为 `source-ref`。否则 Actions 可能尝试获取 `refs/heads/8ff89545*`，在检出阶段失败。若以后要支持提交哈希，应先修改并验证工作流的检出逻辑。
+
+### 云端基地版安装器
+
+云端打包必须与本地脚本保持同样的输出隔离：Inno Setup 写入 `inno_artifacts`，CPack ZIP 写入 `portable_artifacts`。发布安装版只能取 `inno_artifacts/Sunshine.exe`，不得再从 `cpack_artifacts` 取安装器。
 
 ### 发布前检查
 

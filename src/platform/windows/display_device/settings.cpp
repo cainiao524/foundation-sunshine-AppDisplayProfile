@@ -187,7 +187,16 @@ namespace display_device {
       }
 
       if (config.device_prep == parsed_config_t::device_prep_e::ensure_primary) {
-        const auto original_primary_display { previous_primary_display.empty() ? get_current_primary_display(metadata) : previous_primary_display };
+        std::string original_primary_display = previous_primary_display;
+        if (original_primary_display.empty() && config.use_vdd && *config.use_vdd) {
+          // VDD creation can make the new virtual display primary before this
+          // function runs. The pre-VDD topology is the reliable source for the
+          // physical display that must be restored after the session.
+          original_primary_display = find_physical_primary_candidate(initial_topology, config.device_id);
+        }
+        if (original_primary_display.empty()) {
+          original_primary_display = get_current_primary_display(metadata);
+        }
         const auto new_primary_display { determine_new_primary_display(original_primary_display, metadata) };
 
         BOOST_LOG(info) << "Changing primary display to: " << new_primary_display;

@@ -27,6 +27,10 @@ if ($aliasTarget -notcontains $sourcePath) {
 
 $msysSource = $BuildAlias.Replace('\', '/').Replace('C:', '/c')
 $buildPath = Join-Path $BuildAlias $BuildDirectory
+$stagingPath = Join-Path $buildPath 'inno_staging'
+$installerOutputPath = Join-Path $buildPath 'inno_artifacts'
+$portableOutputPath = Join-Path $buildPath 'portable_artifacts'
+$artifacts = Join-Path $sourcePath 'artifacts'
 
 Push-Location $sourcePath
 try {
@@ -55,21 +59,35 @@ finally {
   Pop-Location
 }
 
-& $msysBash -lc "set -euo pipefail; export PATH=/ucrt64/bin:/usr/bin; cd '$msysSource'; cmake -B '$BuildDirectory' -G Ninja -S . -DBUILD_DOCS=OFF -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF -DSUNSHINE_ASSETS_DIR=assets -DFETCH_DRIVER_DEPS=ON -DDRIVER_DEPS_REQUIRED=ON -DSUNSHINE_PUBLISHER_NAME='$PublisherName' -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/cainiao524/foundation-sunshine' -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/cainiao524/foundation-sunshine/issues'; ninja -C '$BuildDirectory' -j2; ctest --test-dir '$BuildDirectory' --output-on-failure; cmake --install '$BuildDirectory' --prefix '$BuildDirectory/inno_staging'"
+if (Test-Path -LiteralPath $stagingPath) {
+  Remove-Item -LiteralPath $stagingPath -Recurse -Force
+}
+
+& $msysBash -lc "set -euo pipefail; export PATH=/ucrt64/bin:/usr/bin; cd '$msysSource'; cmake -B '$BuildDirectory' -G Ninja -S . -DBUILD_DOCS=OFF -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF -DSUNSHINE_ASSETS_DIR=assets -DFETCH_DRIVER_DEPS=ON -DDRIVER_DEPS_REQUIRED=ON -DSUNSHINE_PUBLISHER_NAME='$PublisherName' -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile' -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile/issues'; ninja -C '$BuildDirectory' -j2; ctest --test-dir '$BuildDirectory' --output-on-failure; cmake --install '$BuildDirectory' --prefix '$BuildDirectory/inno_staging'"
 if ($LASTEXITCODE -ne 0) { throw 'Native build or staging failed.' }
 
-& $innoCompiler (Join-Path $buildPath 'sunshine_installer.iss')
+foreach ($outputPath in $installerOutputPath, $portableOutputPath) {
+  if (Test-Path -LiteralPath $outputPath) {
+    Remove-Item -LiteralPath $outputPath -Recurse -Force
+  }
+  New-Item -ItemType Directory -Force -Path $outputPath | Out-Null
+}
+
+& $innoCompiler "/O$installerOutputPath" (Join-Path $buildPath 'sunshine_installer.iss')
 if ($LASTEXITCODE -ne 0) { throw 'Installer packaging failed.' }
 
-& 'C:\msys64\ucrt64\bin\cpack.exe' -G ZIP --config (Join-Path $buildPath 'CPackConfig.cmake')
+& 'C:\msys64\ucrt64\bin\cpack.exe' -G ZIP -B $portableOutputPath --config (Join-Path $buildPath 'CPackConfig.cmake')
 if ($LASTEXITCODE -ne 0) { throw 'Portable package creation failed.' }
 
-$artifacts = Join-Path $sourcePath 'artifacts'
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
-Copy-Item -LiteralPath (Join-Path $buildPath 'cpack_artifacts\Sunshine.exe') -Destination (Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsInstaller.exe') -Force
-Copy-Item -LiteralPath (Join-Path $buildPath 'cpack_artifacts\Sunshine.zip') -Destination (Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsPortable.zip') -Force
+$installerArtifact = Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsInstaller.exe'
+$portableArtifact = Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsPortable.zip'
+$checksumArtifact = Join-Path $artifacts 'SHA256SUMS.txt'
+Remove-Item -LiteralPath $installerArtifact, $portableArtifact, $checksumArtifact -Force -ErrorAction SilentlyContinue
+Copy-Item -LiteralPath (Join-Path $installerOutputPath 'Sunshine.exe') -Destination $installerArtifact
+Copy-Item -LiteralPath (Join-Path $portableOutputPath 'Sunshine.zip') -Destination $portableArtifact
 Get-FileHash -Algorithm SHA256 (Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsInstaller.exe'), (Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsPortable.zip') |
   ForEach-Object { '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path -Leaf $_.Path) } |
-  Set-Content -Encoding ascii (Join-Path $artifacts 'SHA256SUMS.txt')
+  Set-Content -Encoding ascii $checksumArtifact
 
 Get-ChildItem -LiteralPath $artifacts
