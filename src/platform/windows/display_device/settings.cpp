@@ -176,6 +176,16 @@ namespace display_device {
      */
     boost::optional<std::string>
     handle_primary_display_configuration(const parsed_config_t &config, const std::string &previous_primary_display, const topology_metadata_t &metadata, const active_topology_t &initial_topology) {
+      if (config.use_vdd &&
+          *config.use_vdd &&
+          config.vdd_prep == parsed_config_t::vdd_prep_e::vdd_as_secondary) {
+        // session_t::apply_vdd_display_stage() already applies the physical-primary
+        // topology before settings_t handles modes and HDR. Calling SetDisplayConfig
+        // again here races the VDD topology transition and can return ERROR_GEN_FAILURE.
+        BOOST_LOG(debug) << "VDD secondary topology already selected physical primary; skipping duplicate primary-display configuration";
+        return std::string {};
+      }
+
       if (config.device_prep == parsed_config_t::device_prep_e::ensure_primary) {
         const auto original_primary_display { previous_primary_display.empty() ? get_current_primary_display(metadata) : previous_primary_display };
         const auto new_primary_display { determine_new_primary_display(original_primary_display, metadata) };
