@@ -206,44 +206,19 @@ namespace display_device {
   }  // namespace
 
   std::unordered_set<std::string>
-  remove_vdd_from_topology(active_topology_t &topology) {
+  remove_vdd_from_topology(
+    active_topology_t &topology,
+    const std::unordered_set<std::string> &vdd_device_ids) {
     std::unordered_set<std::string> removed_device_ids;
-    
-    // Get list of available devices (includes both active and inactive devices)
-    // This ensures we don't remove inactive devices that can be re-enabled
-    const auto available_devices = enum_available_devices();
-    std::unordered_set<std::string> available_device_ids;
-    for (const auto &[device_id, info] : available_devices) {
-      // Include all devices (active, inactive, primary) - they all can potentially be used
-      available_device_ids.insert(device_id);
-    }
 
     for (auto &group : topology) {
       auto new_end = std::remove_if(group.begin(), group.end(),
-        [&removed_device_ids, &available_device_ids](const std::string &device_id) {
-          // First check if device exists in available devices
-          // Note: available_devices includes inactive devices, so inactive devices will pass this check
-          const bool device_exists = available_device_ids.count(device_id) > 0;
-          
-          if (!device_exists) {
-            // Device doesn't exist in available devices at all - remove it
-            // This means the device was truly destroyed (e.g., VDD uninstalled, physical display disconnected)
-            // It's safe to remove as it cannot be re-enabled
-            BOOST_LOG(debug) << "Removing non-existent device from topology: " << device_id;
-            removed_device_ids.insert(device_id);  // Track removed ID
-            return true;
-          }
-          
-          // Device exists (could be active or inactive), check if it's VDD by friendly name
-          // Only remove if it's VDD - inactive physical displays will be preserved
-          const auto friendly_name = get_display_friendly_name(device_id);
-          if (friendly_name == ZAKO_NAME) {
+        [&removed_device_ids, &vdd_device_ids](const std::string &device_id) {
+          if (vdd_device_ids.contains(device_id)) {
             BOOST_LOG(debug) << "Removing VDD device from topology: " << device_id;
-            removed_device_ids.insert(device_id);  // Track removed ID
+            removed_device_ids.insert(device_id);
             return true;
           }
-          
-          // Device exists and is not VDD - preserve it (even if inactive, it can be re-enabled)
           return false;
         });
       group.erase(new_end, group.end());
@@ -323,6 +298,63 @@ namespace display_device {
 
     const auto device_ids = get_device_ids_from_topology(topology);
     return device_ids.size() == 1 && device_ids.contains(vdd_device_id);
+  }
+
+  device_id_remap_result_t
+  resolve_device_id_remaps(
+    const std::unordered_set<std::string> &expected_device_ids,
+    const device_identity_map_t &saved_identities,
+    const device_identity_map_t &current_identities) {
+    device_id_remap_result_t result;
+    std::unordered_set<std::string> reserved_current_ids;
+    std::map<std::string, std::vector<std::string>> missing_ids_by_identity;
+
+    for (const auto &expected_id : expected_device_ids) {
+      if (current_identities.contains(expected_id)) {
+        reserved_current_ids.insert(expected_id);
+        continue;
+      }
+
+      const auto saved_it = saved_identities.find(expected_id);
+      if (saved_it == saved_identities.end() || saved_it->second.empty()) {
+        result.unresolved_device_ids.insert(expected_id);
+        continue;
+      }
+
+      missing_ids_by_identity[saved_it->second].push_back(expected_id);
+    }
+
+    for (const auto &[identity, old_ids] : missing_ids_by_identity) {
+      std::vector<std::string> candidates;
+      for (const auto &[current_id, current_identity] : current_identities) {
+        if (current_identity == identity && !reserved_current_ids.contains(current_id)) {
+          candidates.push_back(current_id);
+        }
+      }
+
+      if (old_ids.size() == 1 && candidates.size() == 1) {
+        result.replacements.emplace(old_ids.front(), candidates.front());
+        reserved_current_ids.insert(candidates.front());
+      }
+      else {
+        result.unresolved_device_ids.insert(old_ids.begin(), old_ids.end());
+      }
+    }
+
+    return result;
+  }
+
+  void
+  remap_topology_device_ids(
+    active_topology_t &topology,
+    const std::map<std::string, std::string> &replacements) {
+    for (auto &group : topology) {
+      for (auto &device_id : group) {
+        if (const auto replacement = replacements.find(device_id); replacement != replacements.end()) {
+          device_id = replacement->second;
+        }
+      }
+    }
   }
 
   boost::optional<handled_topology_result_t>

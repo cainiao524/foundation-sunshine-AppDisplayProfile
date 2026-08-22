@@ -317,6 +317,7 @@ namespace display_device {
         available_devices[device_id] = device_info_t {
           w_utils::get_display_name(path),
           w_utils::get_friendly_name(path),
+          w_utils::get_physical_device_identity(path),
           mode && w_utils::is_primary(*mode) ? device_state_e::primary : device_state_e::active,
           w_utils::get_hdr_state(path)
         };
@@ -325,6 +326,7 @@ namespace display_device {
         available_devices[device_id] = device_info_t {
           std::string {},  // Inactive devices can have multiple display names, so it's just meaningless use any
           w_utils::get_friendly_name(path),
+          w_utils::get_physical_device_identity(path),
           device_state_e::inactive,
           hdr_state_e::unknown
         };

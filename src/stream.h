@@ -67,6 +67,16 @@ namespace stream {
       host_terminate,
     };
 
+    enum class display_stop_origin_e : int {
+      disconnect,
+      explicit_app_cancel,
+    };
+
+    constexpr bool
+    should_restore_display_state(display_stop_origin_e origin, bool restore_on_disconnect) noexcept {
+      return origin == display_stop_origin_e::explicit_app_cancel || restore_on_disconnect;
+    }
+
     const char *
     stop_reason_name(stop_reason_e reason);
 

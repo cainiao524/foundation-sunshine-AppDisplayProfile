@@ -981,9 +981,13 @@ namespace nvhttp {
     // GameStream 的 /cancel 表示退出当前应用，而普通断开由 RTSP/控制通道处理。
     // 清理可能需要等待编码器和应用退出，不能阻塞 NVHTTP 工作线程。
     if (begin_global_cancel()) {
-      BOOST_LOG(info) << "Global app cancel accepted; stopping all streaming sessions asynchronously"sv;
+      const bool restore_display_state = stream::session::should_restore_display_state(
+        stream::session::display_stop_origin_e::explicit_app_cancel,
+        false);
+      BOOST_LOG(info) << "Global app cancel accepted; stopping all streaming sessions asynchronously"
+                      << " [display_action=restore]";
       try {
-        rtsp_stream::terminate_sessions_async(stream::session::stop_reason_e::client_cancel, []() {
+        rtsp_stream::terminate_sessions_async(stream::session::stop_reason_e::client_cancel, [restore_display_state]() {
           auto clear_pending = util::fail_guard([]() {
             finish_global_cancel();
           });
@@ -1001,7 +1005,9 @@ namespace nvhttp {
           }
 
           try {
-            display_device::session_t::get().restore_state();
+            if (restore_display_state) {
+              display_device::session_t::get().restore_state();
+            }
           }
           catch (const std::exception &e) {
             BOOST_LOG(error) << "Failed to restore display state during app cancel: "sv << e.what();

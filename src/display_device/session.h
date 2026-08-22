@@ -19,6 +19,22 @@ namespace display_device {
   std::string
   resolve_vdd_identifier(bool reuse_vdd, const rtsp_stream::launch_session_t &session);
 
+  enum class vdd_cleanup_timing_e {
+    none,
+    before_restore,
+    after_restore,
+  };
+
+  /**
+   * @brief Decide when a non-persistent VDD may be destroyed during display restoration.
+   */
+  vdd_cleanup_timing_e
+  resolve_vdd_cleanup_timing(
+    bool vdd_present,
+    bool keep_enabled,
+    bool has_persistent_data,
+    bool vdd_is_only_display);
+
   /**
    * @brief A singleton class for managing the display device configuration for the whole Sunshine session.
    *
@@ -284,7 +300,7 @@ namespace display_device {
      * @param reason The reason for reverting settings.
      */
     void
-    start_polling_restore(revert_reason_e reason);
+    start_polling_restore(revert_reason_e reason, vdd_cleanup_timing_e cleanup_timing);
 
     /**
      * @brief 执行依赖可访问交互式 Windows 会话的 VDD 显示操作。

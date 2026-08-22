@@ -24,6 +24,32 @@
 
 namespace display_device {
 
+  vdd_cleanup_timing_e
+  resolve_vdd_cleanup_timing(
+    bool vdd_present,
+    bool keep_enabled,
+    bool has_persistent_data,
+    bool vdd_is_only_display) {
+    if (!vdd_present || keep_enabled || vdd_is_only_display) {
+      return vdd_cleanup_timing_e::none;
+    }
+
+    return has_persistent_data ?
+             vdd_cleanup_timing_e::after_restore :
+             vdd_cleanup_timing_e::before_restore;
+  }
+
+  namespace {
+    void
+    destroy_vdd_for_restore(session_t &session, vdd_cleanup_timing_e timing) {
+      BOOST_LOG(info) << "非常驻模式，在"
+                      << (timing == vdd_cleanup_timing_e::after_restore ? "恢复后" : "恢复前")
+                      << "销毁VDD";
+      session.destroy_vdd_monitor();
+      std::this_thread::sleep_for(1000ms);
+    }
+  }  // namespace
+
   class session_t::StateRetryTimer {
   public:
     /**
@@ -573,7 +599,7 @@ namespace display_device {
           retry_session.env["SUNSHINE_CLIENT_CERT_UUID"] = client_cert_uuid;
         }
         retry_session.hdr_capabilities = hdr_capabilities;
-        if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology, pre_saved_initial_modes)) {
+        if (!settings.apply_config(config_copy, retry_session, pre_saved_initial_topology, pre_saved_initial_modes, pre_vdd_devices)) {
           BOOST_LOG(warning) << "Failed to apply display settings - will stop trying, but will allow stream to continue.";
           // WARNING! After call to the method below, this lambda function is no longer valid!
           // DO NOT access anything from the capture list!
@@ -627,7 +653,12 @@ namespace display_device {
       }
     }
 
-    const auto apply_result = settings.apply_config(*parsed_config, session, pre_saved_initial_topology, pre_saved_initial_modes);
+    const auto apply_result = settings.apply_config(
+      *parsed_config,
+      session,
+      pre_saved_initial_topology,
+      pre_saved_initial_modes,
+      pending_vdd_.pre_vdd_devices);
     if (apply_result) {
       timer->setup_timer(nullptr);
       pending_vdd_.reset();
@@ -927,7 +958,7 @@ namespace display_device {
     // scoped to the stream that requested HDR on a Zako display.
     platf::vulkan_hdr_bridge::disable();
 #endif
-    // 统一的VDD清理逻辑（在恢复拓扑之前执行，不需要CCD API，锁屏时也可以执行）
+    // 统一决定 VDD 清理时机：有可恢复拓扑时先恢复物理显示器，再销毁 VDD。
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
     // 常驻模式：只影响 VDD 是否销毁，不影响拓扑恢复
@@ -1000,41 +1031,23 @@ namespace display_device {
     // 检查 apply_config 是否曾成功执行（persistent_data 是否存在）
     const bool has_persistent = settings.has_persistent_data();
 
-    // 立即执行完整 restore
-    // VDD 销毁逻辑
+    bool vdd_is_only_display = false;
     if (!vdd_id.empty()) {
-      bool should_destroy = false;
-      
-      // 判断1：常驻模式 - 保留VDD
-      if (is_keep_enabled) {
-        BOOST_LOG(debug) << "常驻模式，保留VDD";
+      const auto devices = display_device::enum_available_devices();
+      vdd_is_only_display = devices.empty() || (devices.size() == 1 && devices.count(vdd_id));
+      if (vdd_is_only_display && !is_keep_enabled) {
+        BOOST_LOG(info) << "无头主机检测：VDD 是唯一显示设备，跳过销毁";
       }
-      // 判断2：非常驻模式 - 销毁VDD（无论是否是无操作模式）
-      else if (has_persistent) {
-        BOOST_LOG(info) << "非常驻模式，销毁VDD";
-        should_destroy = true;
-      }
-      // 判断3：无persistent_data - apply_config 从未执行成功（如锁屏中退出串流）
-      else {
-        BOOST_LOG(info) << "apply_config 未执行（无persistent_data），销毁VDD并跳过拓扑恢复";
-        should_destroy = true;
-      }
+    }
 
-      // 无头主机保护：如果销毁后会变成无头（VDD 是唯一显示设备），跳过销毁
-      // 这避免了无意义的销毁+重建循环（device ID 变化导致 persistent_data 失效）
-      if (should_destroy) {
-        auto devices = display_device::enum_available_devices();
-        bool only_vdd = (devices.size() == 1 && devices.count(vdd_id));
-        if (only_vdd || devices.empty()) {
-          BOOST_LOG(info) << "无头主机检测：VDD 是唯一显示设备，跳过销毁";
-          should_destroy = false;
-        }
-      }
+    const auto cleanup_timing = resolve_vdd_cleanup_timing(
+      !vdd_id.empty(),
+      is_keep_enabled,
+      has_persistent,
+      vdd_is_only_display);
 
-      if (should_destroy) {
-        destroy_vdd_monitor();
-        std::this_thread::sleep_for(1000ms);
-      }
+    if (cleanup_timing == vdd_cleanup_timing_e::before_restore) {
+      destroy_vdd_for_restore(*this, cleanup_timing);
     }
 
     // 如果 apply_config 从未执行成功，拓扑从未被修改过，不需要恢复
@@ -1049,10 +1062,13 @@ namespace display_device {
     const bool settings_will_fail = settings.is_changing_settings_going_to_fail();
     BOOST_LOG(debug) << "Checking if reverting settings will fail: " << settings_will_fail;
     
-    // VDD生命周期已在上面的逻辑中决定（销毁或保留），通知revert_settings不要再处理VDD销毁
+    // VDD 生命周期由本层处理；revert_settings 只恢复拓扑、模式和 HDR。
     const bool vdd_already_handled = true;
     
     if (!settings_will_fail && settings.revert_settings(reason, vdd_already_handled)) {
+      if (cleanup_timing == vdd_cleanup_timing_e::after_restore) {
+        destroy_vdd_for_restore(*this, cleanup_timing);
+      }
       stop_timer_and_clear_vdd_state();
     }
     else {
@@ -1063,7 +1079,7 @@ namespace display_device {
       pending_restore_ = true;
       
       // 添加恢复任务（自动处理锁屏检查和立即执行）
-      SessionEventListener::add_unlock_task([this, reason]() {
+      SessionEventListener::add_unlock_task([this, reason, cleanup_timing]() {
         // 快速检查是否还需要恢复（最小化锁持有时间）
         {
           std::lock_guard lock { mutex };
@@ -1077,13 +1093,16 @@ namespace display_device {
         if (settings.is_changing_settings_going_to_fail()) {
           BOOST_LOG(warning) << "CCD API仍不可用，启动轮询机制";
           std::lock_guard lock { mutex };
-          this->start_polling_restore(reason);
+          this->start_polling_restore(reason, cleanup_timing);
           return;
         }
         
         // 执行恢复
         auto result = settings.revert_settings(reason, true);
         BOOST_LOG(info) << "恢复显示设置" << (result ? "成功" : "失败");
+        if (result && cleanup_timing == vdd_cleanup_timing_e::after_restore) {
+          destroy_vdd_for_restore(*this, cleanup_timing);
+        }
         
         // 恢复完成后清除标志和状态
         {
@@ -1096,11 +1115,11 @@ namespace display_device {
   }
 
   void
-  session_t::start_polling_restore(revert_reason_e reason) {
+  session_t::start_polling_restore(revert_reason_e reason, vdd_cleanup_timing_e cleanup_timing) {
     polling_retry_count_.store(0, boost::memory_order_relaxed);  // 重置计数器
     const int max_retries = 20;
 
-    timer->setup_timer([this, reason, max_retries]() {
+    timer->setup_timer([this, reason, cleanup_timing, max_retries]() {
       // 检查是否还需要恢复
       if (!pending_restore_) {
         BOOST_LOG(debug) << "恢复操作已取消，跳过";
@@ -1119,9 +1138,12 @@ namespace display_device {
         return false;
       }
 
-      // VDD生命周期已由restore_state_impl决定，跳过revert_settings中的VDD销毁
+      // VDD 在恢复成功后再按预定时机清理。
       auto result = settings.revert_settings(reason, true);
       BOOST_LOG(info) << "轮询恢复显示设置" << (result ? "成功" : "失败") << "，不再重试";
+      if (result && cleanup_timing == vdd_cleanup_timing_e::after_restore) {
+        destroy_vdd_for_restore(*this, cleanup_timing);
+      }
       pending_restore_ = false;
       clear_vdd_state();
       return true;

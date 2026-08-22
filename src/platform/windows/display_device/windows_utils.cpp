@@ -19,6 +19,7 @@
 
 // Windows includes after "windows.h"
 #include <SetupApi.h>
+#include <devpkey.h>
 #include <wtsapi32.h>
 
 namespace display_device::w_utils {
@@ -467,6 +468,77 @@ namespace display_device::w_utils {
     static constexpr boost::uuids::uuid ns_id {};  // null namespace = no salt
     const auto boost_uuid { boost::uuids::name_generator_sha1 { ns_id }(device_id_data.data(), device_id_data.size()) };
     return "{" + boost::uuids::to_string(boost_uuid) + "}";
+  }
+
+  std::string
+  get_physical_device_identity(const DISPLAYCONFIG_PATH_INFO &path) {
+    const auto device_path { get_monitor_device_path_wstr(path) };
+    if (device_path.empty()) {
+      return {};
+    }
+
+    static const GUID monitor_guid { 0xe6f07b5f, 0xee97, 0x4a90, { 0xb0, 0x76, 0x33, 0xf5, 0x7b, 0xf4, 0xea, 0xa7 } };
+    static const DEVPROPKEY container_id_property {
+      { 0x8c7ed206, 0x3f8a, 0x4827, { 0xb3, 0xab, 0xae, 0x9e, 0x1f, 0xae, 0xfc, 0x6c } },
+      2
+    };
+    HDEVINFO dev_info_handle { SetupDiGetClassDevsW(&monitor_guid, nullptr, nullptr, DIGCF_DEVICEINTERFACE) };
+    if (dev_info_handle == INVALID_HANDLE_VALUE) {
+      return {};
+    }
+
+    const auto dev_info_handle_cleanup {
+      util::fail_guard([&dev_info_handle]() {
+        if (!SetupDiDestroyDeviceInfoList(dev_info_handle)) {
+          BOOST_LOG(error) << get_error_string(static_cast<LONG>(GetLastError())) << " \"SetupDiDestroyDeviceInfoList\" failed.";
+        }
+      })
+    };
+
+    SP_DEVICE_INTERFACE_DATA dev_interface_data {};
+    dev_interface_data.cbSize = sizeof(dev_interface_data);
+    for (DWORD monitor_index = 0;; ++monitor_index) {
+      if (!SetupDiEnumDeviceInterfaces(dev_info_handle, nullptr, &monitor_guid, monitor_index, &dev_interface_data)) {
+        if (GetLastError() == ERROR_NO_MORE_ITEMS) {
+          break;
+        }
+        continue;
+      }
+
+      std::wstring dev_interface_path;
+      SP_DEVINFO_DATA dev_info_data {};
+      dev_info_data.cbSize = sizeof(dev_info_data);
+      if (!get_device_interface_detail(dev_info_handle, dev_interface_data, dev_interface_path, dev_info_data) ||
+          !boost::iequals(dev_interface_path, device_path)) {
+        continue;
+      }
+
+      GUID container_id {};
+      DEVPROPTYPE property_type {};
+      if (!SetupDiGetDevicePropertyW(
+            dev_info_handle,
+            &dev_info_data,
+            &container_id_property,
+            &property_type,
+            reinterpret_cast<PBYTE>(&container_id),
+            sizeof(container_id),
+            nullptr,
+            0) ||
+          property_type != DEVPROP_TYPE_GUID ||
+          IsEqualGUID(container_id, GUID_NULL)) {
+        return {};
+      }
+
+      static constexpr boost::uuids::uuid ns_id {};
+      const auto identity_uuid {
+        boost::uuids::name_generator_sha1 { ns_id }(
+          reinterpret_cast<const char *>(&container_id),
+          sizeof(container_id))
+      };
+      return "container:{" + boost::uuids::to_string(identity_uuid) + "}";
+    }
+
+    return {};
   }
 
   std::string

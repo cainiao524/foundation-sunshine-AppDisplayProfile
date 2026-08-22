@@ -206,6 +206,15 @@ namespace display_device::w_utils {
   std::string
   get_device_id(const DISPLAYCONFIG_PATH_INFO &path);
 
+  /**
+   * @brief Get a route-independent identity for a physical monitor.
+   * @returns A stable identity derived from the Windows device container, or an empty string.
+   * @note This identity is used only to match a monitor after a dual-GPU path switch. It does not
+   *       replace Sunshine's public device id.
+   */
+  std::string
+  get_physical_device_identity(const DISPLAYCONFIG_PATH_INFO &path);
+
   std::string
   get_device_driver_path(const DISPLAYCONFIG_PATH_INFO &path);
 

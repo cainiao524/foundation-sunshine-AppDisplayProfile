@@ -172,7 +172,8 @@ namespace display_device {
       const parsed_config_t &config,
       const rtsp_stream::launch_session_t &session,
       const boost::optional<active_topology_t> &pre_saved_initial_topology = boost::none,
-      const boost::optional<device_display_mode_map_t> &pre_saved_initial_modes = boost::none);
+      const boost::optional<device_display_mode_map_t> &pre_saved_initial_modes = boost::none,
+      const boost::optional<device_info_map_t> &pre_saved_devices = boost::none);
 
     /**
      * @brief Revert the applied configuration and restore the previous settings.

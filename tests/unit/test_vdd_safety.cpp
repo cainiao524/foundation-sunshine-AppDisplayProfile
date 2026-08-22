@@ -74,6 +74,81 @@ TEST(VddBaselineSafety, DetectsVddOnlyTopology) {
   EXPECT_TRUE(is_vdd_only_topology({ { "vdd" } }, "vdd"));
 }
 
+TEST(VddRestoreSafety, RemapsOnlyTheMissingDualGpuAliasAndPreservesMultiDisplayTopology) {
+  using namespace display_device;
+
+  const std::unordered_set<std::string> expected_ids { "panel-old", "external" };
+  const device_identity_map_t saved_identities {
+    { "panel-old", "panel-container" },
+    { "external", "external-container" },
+  };
+  const device_identity_map_t current_identities {
+    { "panel-new", "panel-container" },
+    { "external", "external-container" },
+    { "vdd", "" },
+  };
+
+  const auto result = resolve_device_id_remaps(expected_ids, saved_identities, current_identities);
+  ASSERT_TRUE(result.unresolved_device_ids.empty());
+  ASSERT_EQ(result.replacements.size(), 1);
+  EXPECT_EQ(result.replacements.at("panel-old"), "panel-new");
+
+  active_topology_t topology { { "panel-old" }, { "external" } };
+  remap_topology_device_ids(topology, result.replacements);
+  EXPECT_EQ(topology, (active_topology_t { { "panel-new" }, { "external" } }));
+}
+
+TEST(VddRestoreSafety, RejectsAmbiguousPhysicalIdentityInsteadOfGuessing) {
+  using namespace display_device;
+
+  const auto result = resolve_device_id_remaps(
+    { "left-old", "right-old" },
+    {
+      { "left-old", "identical-monitor" },
+      { "right-old", "identical-monitor" },
+    },
+    {
+      { "left-new", "identical-monitor" },
+      { "right-new", "identical-monitor" },
+    });
+
+  EXPECT_TRUE(result.replacements.empty());
+  EXPECT_EQ(result.unresolved_device_ids.size(), 2);
+  EXPECT_TRUE(result.unresolved_device_ids.contains("left-old"));
+  EXPECT_TRUE(result.unresolved_device_ids.contains("right-old"));
+}
+
+TEST(VddRestoreSafety, ExactIdsReserveTheirDisplaysDuringAliasMatching) {
+  using namespace display_device;
+
+  const auto result = resolve_device_id_remaps(
+    { "panel-old", "external" },
+    {
+      { "panel-old", "shared-identity" },
+      { "external", "shared-identity" },
+    },
+    {
+      { "panel-new", "shared-identity" },
+      { "external", "shared-identity" },
+    });
+
+  ASSERT_TRUE(result.unresolved_device_ids.empty());
+  ASSERT_EQ(result.replacements.size(), 1);
+  EXPECT_EQ(result.replacements.at("panel-old"), "panel-new");
+}
+
+TEST(VddRestoreSafety, RemovesOnlyConfirmedVddIds) {
+  using namespace display_device;
+
+  active_topology_t topology { { "missing-physical" }, { "vdd" }, { "external", "vdd-old" } };
+  const auto removed = remove_vdd_from_topology(topology, { "vdd", "vdd-old" });
+
+  EXPECT_EQ(removed.size(), 2);
+  EXPECT_TRUE(removed.contains("vdd"));
+  EXPECT_TRUE(removed.contains("vdd-old"));
+  EXPECT_EQ(topology, (active_topology_t { { "missing-physical" }, { "external" } }));
+}
+
 TEST(VddCursorExportSafety, ParsesPersistedEnabledValues) {
   using display_device::vdd_utils::hardware_cursor_export_enabled;
 

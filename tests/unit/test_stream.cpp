@@ -68,3 +68,17 @@ TEST(VideoRtpTimestampTests, WrapsForwardPastUint32Max) {
 
   EXPECT_EQ(stream::video_rtp_timestamp(wrap_time, epoch), 0u);
 }
+
+TEST(DisplayStopPolicyTests, DisconnectKeepsOrRestoresAccordingToTheAppPolicy) {
+  using origin_e = stream::session::display_stop_origin_e;
+
+  EXPECT_FALSE(stream::session::should_restore_display_state(origin_e::disconnect, false));
+  EXPECT_TRUE(stream::session::should_restore_display_state(origin_e::disconnect, true));
+}
+
+TEST(DisplayStopPolicyTests, ExplicitAppCancelAlwaysRestores) {
+  using origin_e = stream::session::display_stop_origin_e;
+
+  EXPECT_TRUE(stream::session::should_restore_display_state(origin_e::explicit_app_cancel, false));
+  EXPECT_TRUE(stream::session::should_restore_display_state(origin_e::explicit_app_cancel, true));
+}

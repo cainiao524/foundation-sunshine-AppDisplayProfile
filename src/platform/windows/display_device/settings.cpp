@@ -2,6 +2,7 @@
 #include <algorithm>
 #include <chrono>
 #include <fstream>
+#include <set>
 #include <thread>
 
 // local includes
@@ -21,6 +22,8 @@ namespace display_device {
 
   struct settings_t::persistent_data_t {
     topology_pair_t topology; /**< Contains topology before the modification and the one we modified. */
+    device_identity_map_t device_identities; /**< Original route-independent identities for physical displays. */
+    std::set<std::string> vdd_device_ids; /**< Device ids confirmed to belong to VDD monitors. */
     std::string original_primary_display; /**< Original primary display in the topology we modified. Empty value if we didn't modify it. */
     device_display_mode_map_t original_modes; /**< Original display modes in the topology we modified. Empty value if we didn't modify it. */
     hdr_state_map_t original_hdr_states; /**< Original display HDR states in the topology we modified. Empty value if we didn't modify it. */
@@ -51,6 +54,8 @@ namespace display_device {
     to_json(nlohmann::json &json, const persistent_data_t &data) {
       json = {
         { "topology", data.topology },
+        { "device_identities", data.device_identities },
+        { "vdd_device_ids", data.vdd_device_ids },
         { "original_primary_display", data.original_primary_display },
         { "original_modes", data.original_modes },
         { "original_hdr_states", data.original_hdr_states },
@@ -63,6 +68,8 @@ namespace display_device {
     friend void
     from_json(const nlohmann::json &json, persistent_data_t &data) {
       json.at("topology").get_to(data.topology);
+      data.device_identities = json.value("device_identities", device_identity_map_t {});
+      data.vdd_device_ids = json.value("vdd_device_ids", std::set<std::string> {});
       json.at("original_primary_display").get_to(data.original_primary_display);
       json.at("original_modes").get_to(data.original_modes);
       json.at("original_hdr_states").get_to(data.original_hdr_states);
@@ -273,6 +280,77 @@ namespace display_device {
         }
         else {
           ++it;
+        }
+      }
+    }
+
+    device_identity_map_t
+    collect_device_identities(const device_info_map_t &devices) {
+      device_identity_map_t identities;
+      for (const auto &[device_id, info] : devices) {
+        identities.emplace(device_id, info.physical_identity);
+      }
+      return identities;
+    }
+
+    std::unordered_set<std::string>
+    collect_persisted_device_ids(
+      const settings_t::persistent_data_t &data,
+      const std::unordered_set<std::string> &vdd_device_ids) {
+      auto device_ids { get_device_ids_from_topology(data.topology.initial) };
+      const auto modified_ids { get_device_ids_from_topology(data.topology.modified) };
+      device_ids.insert(modified_ids.begin(), modified_ids.end());
+
+      for (const auto &[device_id, _] : data.original_modes) {
+        device_ids.insert(device_id);
+      }
+      for (const auto &[device_id, _] : data.original_hdr_states) {
+        device_ids.insert(device_id);
+      }
+      if (!data.original_primary_display.empty()) {
+        device_ids.insert(data.original_primary_display);
+      }
+      if (data.color_profile && !data.color_profile->device_id.empty()) {
+        device_ids.insert(data.color_profile->device_id);
+      }
+
+      for (const auto &vdd_id : vdd_device_ids) {
+        device_ids.erase(vdd_id);
+      }
+      return device_ids;
+    }
+
+    void
+    apply_device_id_replacements(
+      settings_t::persistent_data_t &data,
+      const std::map<std::string, std::string> &replacements) {
+      if (replacements.empty()) {
+        return;
+      }
+
+      remap_topology_device_ids(data.topology.initial, replacements);
+      remap_topology_device_ids(data.topology.modified, replacements);
+
+      const auto remap_keyed_values = [&replacements](auto &values) {
+        for (const auto &[old_id, new_id] : replacements) {
+          if (auto old_value = values.find(old_id); old_value != values.end()) {
+            const auto value = old_value->second;
+            values.erase(old_value);
+            values[new_id] = value;
+          }
+        }
+      };
+
+      remap_keyed_values(data.original_modes);
+      remap_keyed_values(data.original_hdr_states);
+      remap_keyed_values(data.device_identities);
+
+      if (const auto replacement = replacements.find(data.original_primary_display); replacement != replacements.end()) {
+        data.original_primary_display = replacement->second;
+      }
+      if (data.color_profile) {
+        if (const auto replacement = replacements.find(data.color_profile->device_id); replacement != replacements.end()) {
+          data.color_profile->device_id = replacement->second;
         }
       }
     }
@@ -698,6 +776,89 @@ namespace display_device {
         return true;
       }
 
+      const auto available_devices = enum_available_devices_checked();
+      if (!available_devices) {
+        BOOST_LOG(warning) << "Display enumeration failed while preparing persistent restoration; keeping restore data for retry";
+        return false;
+      }
+
+      std::unordered_set<std::string> vdd_device_ids {
+        data.vdd_device_ids.begin(),
+        data.vdd_device_ids.end()
+      };
+      std::unordered_set<std::string> vdd_in_initial;
+
+      for (const auto &[device_id, info] : *available_devices) {
+        if (info.friendly_name == ZAKO_NAME) {
+          vdd_device_ids.insert(device_id);
+        }
+      }
+
+      for (const auto &group : data.topology.initial) {
+        for (const auto &device_id : group) {
+          if (vdd_device_ids.contains(device_id)) {
+            vdd_in_initial.insert(device_id);
+          }
+        }
+      }
+
+      bool should_destroy_vdd = false;
+      if (!config::video.vdd_keep_enabled) {
+        for (const auto &vdd_id : vdd_device_ids) {
+          if (vdd_in_initial.count(vdd_id) == 0) {
+            should_destroy_vdd = true;
+            break;
+          }
+        }
+      }
+
+      const auto vdd_ids_from_initial = remove_vdd_from_topology(data.topology.initial, vdd_device_ids);
+      const auto vdd_ids_from_modified = remove_vdd_from_topology(data.topology.modified, vdd_device_ids);
+      std::unordered_set<std::string> all_removed_vdd_ids = vdd_ids_from_initial;
+      all_removed_vdd_ids.insert(vdd_ids_from_modified.begin(), vdd_ids_from_modified.end());
+
+      if (!all_removed_vdd_ids.empty()) {
+        BOOST_LOG(info) << "Removed confirmed VDD devices from persistent topology";
+        data_modified = true;
+      }
+
+      for (const auto &vdd_id : vdd_device_ids) {
+        data_modified = data.original_hdr_states.erase(vdd_id) > 0 || data_modified;
+        data_modified = data.original_modes.erase(vdd_id) > 0 || data_modified;
+        data_modified = data.device_identities.erase(vdd_id) > 0 || data_modified;
+        if (data.original_primary_display == vdd_id) {
+          data.original_primary_display.clear();
+          data_modified = true;
+        }
+        if (data.color_profile && data.color_profile->device_id == vdd_id) {
+          data.color_profile.reset();
+          data_modified = true;
+        }
+      }
+
+      const auto expected_device_ids = collect_persisted_device_ids(data, vdd_device_ids);
+      const auto current_identities = collect_device_identities(*available_devices);
+      const auto remap_result = resolve_device_id_remaps(
+        expected_device_ids,
+        data.device_identities,
+        current_identities);
+
+      if (!remap_result.unresolved_device_ids.empty()) {
+        BOOST_LOG(warning) << "Cannot uniquely resolve persisted physical display ids after a GPU path change; keeping restore data for retry";
+        for (const auto &device_id : remap_result.unresolved_device_ids) {
+          BOOST_LOG(warning) << "Unresolved persisted physical display id: " << device_id;
+        }
+        return false;
+      }
+
+      for (const auto &[old_id, new_id] : remap_result.replacements) {
+        BOOST_LOG(info) << "Remapping physical display id after GPU path change: " << old_id << " -> " << new_id;
+      }
+      if (!remap_result.replacements.empty()) {
+        apply_device_id_replacements(data, remap_result.replacements);
+        data_modified = true;
+      }
+
       bool partially_failed = false;
       if (data.color_profile) {
         if (data.color_profile->version != win_color_profile::state_t::current_version) {
@@ -710,89 +871,7 @@ namespace display_device {
           data_modified = true;
         }
         else {
-          // Keep the snapshot for a later retry, but do not let one missing
-          // display prevent HDR, mode, primary-display, or topology recovery.
           partially_failed = true;
-        }
-      }
-
-      // 在移除VDD之前，先检查拓扑中是否有VDD
-      // 收集VDD的设备ID，分别记录：
-      // - vdd_device_ids: 所有VDD设备ID（用于从HDR/modes中清理）
-      // - vdd_in_modified_only: 只在modified拓扑中的VDD（需要销毁）
-      std::unordered_set<std::string> vdd_device_ids;
-      std::unordered_set<std::string> vdd_in_initial;
-      
-      // 收集 initial 拓扑中的 VDD
-      for (const auto &group : data.topology.initial) {
-        for (const auto &device_id : group) {
-          const auto friendly_name = get_display_friendly_name(device_id);
-          if (friendly_name == ZAKO_NAME) {
-            vdd_device_ids.insert(device_id);
-            vdd_in_initial.insert(device_id);
-          }
-        }
-      }
-      
-      // 收集 modified 拓扑中的 VDD
-      for (const auto &group : data.topology.modified) {
-        for (const auto &device_id : group) {
-          const auto friendly_name = get_display_friendly_name(device_id);
-          if (friendly_name == ZAKO_NAME) {
-            vdd_device_ids.insert(device_id);
-          }
-        }
-      }
-
-      // 如果有VDD不在initial拓扑中（由Sunshine创建），则销毁
-      // 如果VDD在initial拓扑中（用户常驻VDD），则保留
-      // 如果启用了"保持启用"模式，也保留VDD
-      bool should_destroy_vdd = false;
-      if (!config::video.vdd_keep_enabled) {
-        for (const auto &vdd_id : vdd_device_ids) {
-          if (vdd_in_initial.count(vdd_id) == 0) {
-            should_destroy_vdd = true;
-            break;
-          }
-        }
-      }
-      
-      if (skip_vdd_destroy) {
-        BOOST_LOG(debug) << "VDD已由调用方销毁，跳过try_revert_settings中的VDD销毁逻辑";
-      }
-      else if (config::video.vdd_keep_enabled) {
-        BOOST_LOG(debug) << "VDD保持启用模式已开启，保留VDD";
-      }
-      else if (should_destroy_vdd) {
-        BOOST_LOG(info) << "检测到Sunshine创建的VDD（不在初始拓扑中），销毁VDD";
-        display_device::session_t::get().destroy_vdd_monitor();
-      }
-      else if (!vdd_in_initial.empty()) {
-        BOOST_LOG(debug) << "VDD在初始拓扑中（常驻VDD），保留不销毁";
-      }
-
-      // Remove VDD devices from topology before reverting, as VDD may have been destroyed
-      // This function now returns the IDs of removed devices
-      const auto vdd_ids_from_initial = remove_vdd_from_topology(data.topology.initial);
-      const auto vdd_ids_from_modified = remove_vdd_from_topology(data.topology.modified);
-      
-      // Merge VDD IDs from both topologies
-      std::unordered_set<std::string> all_removed_vdd_ids = vdd_ids_from_initial;
-      all_removed_vdd_ids.insert(vdd_ids_from_modified.begin(), vdd_ids_from_modified.end());
-      
-      if (!all_removed_vdd_ids.empty()) {
-        BOOST_LOG(info) << "Removed VDD devices from persistent topology (VDD may have been destroyed)";
-        data_modified = true;
-        
-        // Clean up HDR states and display modes using the VDD IDs from topology removal
-        // This works even after VDD is destroyed, since we got IDs before checking friendly_name
-        for (const auto& vdd_id : all_removed_vdd_ids) {
-          if (data.original_hdr_states.erase(vdd_id) > 0) {
-            BOOST_LOG(debug) << "Removed VDD from original_hdr_states: " << vdd_id;
-          }
-          if (data.original_modes.erase(vdd_id) > 0) {
-            BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
-          }
         }
       }
 
@@ -848,12 +927,8 @@ namespace display_device {
           }
         }
         else if (!modified_topology_valid) {
-          // Modified topology invalid, clear settings that depend on it
-          BOOST_LOG(warning) << "Modified topology invalid, skipping restoration of HDR, modes, and primary display";
-          data.original_hdr_states.clear();
-          data.original_modes.clear();
-          data.original_primary_display.clear();
-          data_modified = true;
+          BOOST_LOG(warning) << "Modified topology invalid; keeping dependent restore data for retry";
+          partially_failed = true;
         }
         else {
           BOOST_LOG(error) << "Cannot switch to the topology to undo changes!";
@@ -875,7 +950,8 @@ namespace display_device {
         }
       }
       else {
-        BOOST_LOG(warning) << "Initial topology invalid (VDD may have been removed), keeping current topology";
+        BOOST_LOG(warning) << "Initial topology invalid; keeping restore data for retry";
+        partially_failed = true;
       }
 
       // Fix HDR states for newly enabled devices
@@ -884,6 +960,19 @@ namespace display_device {
         BOOST_LOG(debug) << "Trying to fix HDR states (if needed).";
         blank_hdr_states(current_hdr_states, newly_enabled_devices);
         set_hdr_states(current_hdr_states);
+      }
+
+      if (!partially_failed) {
+        if (skip_vdd_destroy) {
+          BOOST_LOG(debug) << "VDD lifecycle is managed by the caller; skipping internal destruction";
+        }
+        else if (config::video.vdd_keep_enabled) {
+          BOOST_LOG(debug) << "VDD keep-enabled mode is active; preserving VDD";
+        }
+        else if (should_destroy_vdd) {
+          BOOST_LOG(info) << "Display restoration completed; destroying Sunshine-created VDD";
+          display_device::session_t::get().destroy_vdd_monitor();
+        }
       }
 
       return !partially_failed;
@@ -1032,7 +1121,8 @@ namespace display_device {
     const parsed_config_t &config,
     const rtsp_stream::launch_session_t &session,
     const boost::optional<active_topology_t> &pre_saved_initial_topology,
-    const boost::optional<device_display_mode_map_t> &pre_saved_initial_modes) {
+    const boost::optional<device_display_mode_map_t> &pre_saved_initial_modes,
+    const boost::optional<device_info_map_t> &pre_saved_devices) {
     auto profile_setting = color_profile::resolve_client_hdr_profile(
       config::get_clients_config(), session.client_cert_uuid, session.client_name);
     if (!profile_setting) {
@@ -1044,7 +1134,7 @@ namespace display_device {
     }
 
     const bool client_hdr_enabled = session.enable_hdr;
-    const auto do_apply_config { [this, &pre_saved_initial_topology, &pre_saved_initial_modes, &profile_setting, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
+    const auto do_apply_config { [this, &pre_saved_initial_topology, &pre_saved_initial_modes, &pre_saved_devices, &profile_setting, client_hdr_enabled](const parsed_config_t &config) -> settings_t::apply_result_t {
       // 检测是否为VDD模式
       const bool is_vdd_mode = config.use_vdd && *config.use_vdd;
 
@@ -1115,7 +1205,28 @@ namespace display_device {
       // Therefore, we are always sticking with the first initial topology before the first configuration
       // was applied.
       persistent_data_t new_settings { topology_result->pair };
+      if (pre_saved_devices) {
+        for (const auto &[device_id, info] : *pre_saved_devices) {
+          if (info.friendly_name != ZAKO_NAME && !info.physical_identity.empty()) {
+            new_settings.device_identities.emplace(device_id, info.physical_identity);
+          }
+        }
+      }
+      if (is_vdd_mode && !config.device_id.empty()) {
+        new_settings.vdd_device_ids.insert(config.device_id);
+      }
+
       persistent_data_t &current_settings { persistent_data ? *persistent_data : new_settings };
+      if (persistent_data && pre_saved_devices) {
+        for (const auto &[device_id, info] : *pre_saved_devices) {
+          if (info.friendly_name != ZAKO_NAME && !info.physical_identity.empty()) {
+            current_settings.device_identities.emplace(device_id, info.physical_identity);
+          }
+        }
+      }
+      if (is_vdd_mode && !config.device_id.empty()) {
+        current_settings.vdd_device_ids.insert(config.device_id);
+      }
       const bool should_skip_new_vdd_only_persistence =
         is_vdd_mode &&
         !persistent_data &&
@@ -1386,6 +1497,11 @@ namespace display_device {
     if (persistent_data->original_modes.erase(vdd_id) > 0) {
       BOOST_LOG(debug) << "Removed VDD from original_modes: " << vdd_id;
     }
+    persistent_data->device_identities.erase(vdd_id);
+    persistent_data->vdd_device_ids.erase(vdd_id);
+    if (persistent_data->original_primary_display == vdd_id) {
+      persistent_data->original_primary_display.clear();
+    }
     
     // Save updated persistent data
     save_settings(filepath, *persistent_data);
@@ -1421,6 +1537,13 @@ namespace display_device {
       persistent_data->original_modes.erase(it);
       persistent_data->original_modes[new_id] = mode_value;
       BOOST_LOG(debug) << "Replaced VDD ID in original_modes: " << old_id << " -> " << new_id;
+    }
+
+    if (persistent_data->vdd_device_ids.erase(old_id) > 0) {
+      persistent_data->vdd_device_ids.insert(new_id);
+    }
+    if (persistent_data->original_primary_display == old_id) {
+      persistent_data->original_primary_display = new_id;
     }
     
     // Save updated persistent data

@@ -47,6 +47,7 @@ namespace display_device {
   struct device_info_t {
     std::string display_name; /**< A name representing the OS display (source) the device is connected to. */
     std::string friendly_name; /**< A human-readable name for the device. */
+    std::string physical_identity; /**< Route-independent physical monitor identity, when available. */
     device_state_e device_state; /**< Device's state. @see device_state_e */
     hdr_state_e hdr_state; /**< Device's HDR state. @see hdr_state_e */
   };
@@ -56,6 +57,11 @@ namespace display_device {
    * @see device_info_t
    */
   using device_info_map_t = std::map<std::string, device_info_t>;
+
+  /**
+   * @brief Ordered map of [DEVICE_ID -> route-independent physical monitor identity].
+   */
+  using device_identity_map_t = std::map<std::string, std::string>;
 
   /**
    * @brief Display's resolution.

@@ -96,6 +96,26 @@ namespace {
     EXPECT_EQ(display_device::resolve_vdd_identifier(true, second_session), "shared_vdd");
   }
 
+  TEST(AppDisplayProfile, PersistentDualGpuRestorePrecedesVddDestruction) {
+    using cleanup_timing_e = display_device::vdd_cleanup_timing_e;
+
+    EXPECT_EQ(
+      display_device::resolve_vdd_cleanup_timing(true, false, true, false),
+      cleanup_timing_e::after_restore);
+    EXPECT_EQ(
+      display_device::resolve_vdd_cleanup_timing(true, false, false, false),
+      cleanup_timing_e::before_restore);
+    EXPECT_EQ(
+      display_device::resolve_vdd_cleanup_timing(true, true, true, false),
+      cleanup_timing_e::none);
+    EXPECT_EQ(
+      display_device::resolve_vdd_cleanup_timing(true, false, true, true),
+      cleanup_timing_e::none);
+    EXPECT_EQ(
+      display_device::resolve_vdd_cleanup_timing(false, false, true, false),
+      cleanup_timing_e::none);
+  }
+
   TEST(AppDisplayProfile, UnifiedLayoutsMapToTheExistingPhysicalAndVddActions) {
     using vdd_prep_e = display_device::parsed_config_t::vdd_prep_e;
 

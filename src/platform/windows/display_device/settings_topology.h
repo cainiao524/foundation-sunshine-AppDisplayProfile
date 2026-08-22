@@ -75,6 +75,29 @@ namespace display_device {
   bool
   is_vdd_only_topology(const active_topology_t &topology, const std::string &vdd_device_id);
 
+  struct device_id_remap_result_t {
+    std::map<std::string, std::string> replacements;
+    std::unordered_set<std::string> unresolved_device_ids;
+  };
+
+  /**
+   * @brief Resolve missing display ids through unique route-independent physical identities.
+   * @note Exact device ids always win. Ambiguous identities are left unresolved.
+   */
+  device_id_remap_result_t
+  resolve_device_id_remaps(
+    const std::unordered_set<std::string> &expected_device_ids,
+    const device_identity_map_t &saved_identities,
+    const device_identity_map_t &current_identities);
+
+  /**
+   * @brief Apply device-id replacements without changing topology grouping or order.
+   */
+  void
+  remap_topology_device_ids(
+    active_topology_t &topology,
+    const std::map<std::string, std::string> &replacements);
+
   /**
    * @brief Modify the topology based on the configuration and previously configured topology.
    *
@@ -99,23 +122,23 @@ namespace display_device {
     const boost::optional<active_topology_t> &pre_saved_initial_topology = boost::none);
 
   /**
-   * @brief Remove VDD devices and non-existent devices from topology.
+   * @brief Remove confirmed VDD devices from topology.
    * @param topology Topology to clean.
-   * @return True if any device was removed, false otherwise.
-   * @note This function will NOT remove inactive devices that can be re-enabled.
-   *       enum_available_devices() includes both active and inactive devices,
-   *       so inactive devices will be preserved in the topology.
+   * @param vdd_device_ids Device ids already confirmed to belong to VDD monitors.
+   * @return Device ids that were removed.
    *
    * EXAMPLES:
    * ```cpp
    * active_topology_t topology { { "DEVICE_1" }, { "VDD_DEVICE" } };
-   * if (remove_vdd_from_topology(topology)) {
+   * if (remove_vdd_from_topology(topology, { "VDD_DEVICE" })) {
    *   // VDD device was removed
    * }
    * ```
    */
   std::unordered_set<std::string>
-  remove_vdd_from_topology(active_topology_t &topology);
+  remove_vdd_from_topology(
+    active_topology_t &topology,
+    const std::unordered_set<std::string> &vdd_device_ids);
 
   /**
    * @brief Get current topology metadata without modifying anything.
