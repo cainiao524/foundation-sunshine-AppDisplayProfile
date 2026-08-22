@@ -22,6 +22,8 @@
 | `display-refresh-rate-mode` | 空、`no_operation`、`client`、`fixed` | 跟随全局、保持当前刷新率、客户端请求或固定刷新率 |
 | `display-refresh-rate` | 例如 `60` | 固定刷新率值 |
 | `display-dynamic-resolution-follow-display` | 空、`enabled`、`disabled` | 跟随全局、启用或禁用串流中跟随主机分辨率变化 |
+| `display-hdr-policy` | 空、`ignore_client`、`client`、`forced` | 跟随全局、忽略客户端 HDR 请求、响应客户端请求或强制状态 |
+| `display-hdr-state` | `enabled`、`disabled` | `forced` 策略下强制启用或禁用 HDR；其他策略下不保存 |
 | `display-output-name` | 显示器编号或名称 | `physical` 方案的目标显示器 |
 | `display-disconnect-action` | `keep`、`restore` | 断开后保持或恢复显示状态 |
 

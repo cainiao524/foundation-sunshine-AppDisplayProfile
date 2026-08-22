@@ -14,6 +14,12 @@
 namespace display_device {
 
   /**
+   * @brief Resolve the stable VDD monitor identifier for a launch session.
+   */
+  std::string
+  resolve_vdd_identifier(bool reuse_vdd, const rtsp_stream::launch_session_t &session);
+
+  /**
    * @brief A singleton class for managing the display device configuration for the whole Sunshine session.
    *
    * This class is meant to be an entry point for applying the configuration and reverting it later

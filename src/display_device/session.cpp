@@ -358,6 +358,11 @@ namespace display_device {
 
   }  // namespace
 
+  std::string
+  resolve_vdd_identifier(bool reuse_vdd, const rtsp_stream::launch_session_t &session) {
+    return reuse_vdd ? "shared_vdd" : get_client_id_from_session(session);
+  }
+
   session_t::vdd_stage_result_e
   session_t::apply_vdd_display_stage(const parsed_config_t &config,
     const boost::optional<device_info_map_t> &pre_vdd_devices) {
@@ -738,6 +743,7 @@ namespace display_device {
     pre_vdd_devices.reset();
 
     const std::string current_client_id = get_client_id_from_session(session);
+    const std::string vdd_identifier = resolve_vdd_identifier(config::video.vdd_reuse, session);
     const vdd_utils::hdr_brightness_t hdr_brightness {
       session.hdr_capabilities.max_nits,
       session.hdr_capabilities.min_nits,
@@ -833,7 +839,6 @@ namespace display_device {
 
       BOOST_LOG(info) << "创建虚拟显示器...";
       // 共享模式使用固定标识符；独立模式则使用当前客户端标识符创建显示器。
-      const std::string vdd_identifier = config::video.vdd_reuse ? "shared_vdd" : current_client_id;
       if (!vdd_utils::create_vdd_monitor(vdd_identifier, hdr_brightness, physical_size)) {
         BOOST_LOG(error) << "VDD monitor creation command failed";
         return vdd_stage_result_e::create_failed;
@@ -852,7 +857,7 @@ namespace display_device {
       vdd_utils::destroy_vdd_monitor();
       std::this_thread::sleep_for(500ms);
 
-      if (!try_recover_vdd_device(current_client_id, session.client_name, hdr_brightness, device_zako)) {
+      if (!try_recover_vdd_device(vdd_identifier, session.client_name, hdr_brightness, device_zako)) {
         BOOST_LOG(error) << "VDD设备最终初始化失败";
 
         // last-resort：只有 IOCTL 通路彻底死掉才动 adapter，因为

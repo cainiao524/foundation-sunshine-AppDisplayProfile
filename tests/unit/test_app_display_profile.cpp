@@ -4,6 +4,8 @@
 #include <gtest/gtest.h>
 
 #include "src/display_device/parsed_config.h"
+#include "src/display_device/session.h"
+#include "src/nvhttp_stream_start.h"
 #include "src/process.h"
 
 namespace {
@@ -45,6 +47,70 @@ namespace {
     EXPECT_EQ(session.dynamic_resolution_follow_display_override, 1);
     EXPECT_EQ(session.env["SUNSHINE_CLIENT_DISPLAY_NAME"].to_string(), "client-display");
     EXPECT_EQ(session.display_target_override, -1);
+    EXPECT_EQ(session.appid, 42);
+  }
+
+  TEST(AppDisplayProfile, ExplicitPhysicalTargetBlocksAutomaticVddFallback) {
+    auto processor = make_processor(make_app(0, static_cast<int>(device_prep_e::ensure_active)));
+    rtsp_stream::launch_session_t session {};
+
+    ASSERT_TRUE(processor.apply_app_display_profile(42, session));
+    const display_device::display_intent_t intent {
+      display_device::display_intent_t::target_e::physical,
+      {},
+      false,
+      device_prep_e::ensure_active,
+    };
+
+    EXPECT_FALSE(nvhttp::stream_start::automatic_vdd_fallback_allowed_by_request(intent, session));
+  }
+
+  TEST(AppDisplayProfile, UnconfiguredTargetKeepsAutomaticVddFallbackAvailable) {
+    auto processor = make_processor(make_app(-1));
+    rtsp_stream::launch_session_t session {};
+
+    ASSERT_TRUE(processor.apply_app_display_profile(42, session));
+    const display_device::display_intent_t intent {
+      display_device::display_intent_t::target_e::physical,
+      {},
+      false,
+      device_prep_e::ensure_active,
+    };
+
+    EXPECT_TRUE(nvhttp::stream_start::automatic_vdd_fallback_allowed_by_request(intent, session));
+  }
+
+  TEST(AppDisplayProfile, VddIdentityDoesNotChangeWhenSameClientSwitchesApps) {
+    rtsp_stream::launch_session_t first_session {};
+    first_session.appid = 41;
+    first_session.client_cert_uuid = "same-client";
+    rtsp_stream::launch_session_t second_session {};
+    second_session.appid = 42;
+    second_session.client_cert_uuid = "same-client";
+
+    EXPECT_EQ(
+      display_device::resolve_vdd_identifier(false, first_session),
+      display_device::resolve_vdd_identifier(false, second_session));
+    EXPECT_EQ(display_device::resolve_vdd_identifier(false, first_session), "same-client");
+    EXPECT_EQ(display_device::resolve_vdd_identifier(true, first_session), "shared_vdd");
+    EXPECT_EQ(display_device::resolve_vdd_identifier(true, second_session), "shared_vdd");
+  }
+
+  TEST(AppDisplayProfile, UnifiedLayoutsMapToTheExistingPhysicalAndVddActions) {
+    using vdd_prep_e = display_device::parsed_config_t::vdd_prep_e;
+
+    EXPECT_EQ(
+      display_device::parsed_config_t::to_vdd_prep(device_prep_e::ensure_primary),
+      vdd_prep_e::vdd_as_primary);
+    EXPECT_EQ(
+      display_device::parsed_config_t::to_vdd_prep(device_prep_e::ensure_secondary),
+      vdd_prep_e::vdd_as_secondary);
+    EXPECT_EQ(
+      display_device::parsed_config_t::to_vdd_prep(device_prep_e::ensure_only_display),
+      vdd_prep_e::display_off);
+    EXPECT_EQ(
+      display_device::parsed_config_t::to_physical_device_prep(device_prep_e::ensure_secondary),
+      device_prep_e::ensure_active);
   }
 
   TEST(AppDisplayProfile, VirtualLayoutsOverrideClientTargetAndLayout) {

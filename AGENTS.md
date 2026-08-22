@@ -76,18 +76,18 @@ git diff --check
 
 ```powershell
 gh workflow run sync-upstream-build.yml `
-  -R cainiao524/foundation-sunshine `
+  -R cainiao524/foundation-sunshine-AppDisplayProfile `
   --ref feature/app-display-profile `
   -f force-build=true
 
 gh run list `
-  -R cainiao524/foundation-sunshine `
+  -R cainiao524/foundation-sunshine-AppDisplayProfile `
   --workflow sync-upstream-build.yml `
   --event workflow_dispatch `
   --limit 1
 
 gh run watch <运行编号> `
-  -R cainiao524/foundation-sunshine `
+  -R cainiao524/foundation-sunshine-AppDisplayProfile `
   --exit-status
 ```
 

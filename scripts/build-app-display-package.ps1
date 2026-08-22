@@ -32,6 +32,12 @@ $installerOutputPath = Join-Path $buildPath 'inno_artifacts'
 $portableOutputPath = Join-Path $buildPath 'portable_artifacts'
 $artifacts = Join-Path $sourcePath 'artifacts'
 
+foreach ($pathToClean in $stagingPath, $installerOutputPath, $portableOutputPath, $artifacts) {
+  if (Test-Path -LiteralPath $pathToClean) {
+    Remove-Item -LiteralPath $pathToClean -Recurse -Force
+  }
+}
+
 Push-Location $sourcePath
 try {
   npm.cmd ci
@@ -59,10 +65,6 @@ finally {
   Pop-Location
 }
 
-if (Test-Path -LiteralPath $stagingPath) {
-  Remove-Item -LiteralPath $stagingPath -Recurse -Force
-}
-
 & $msysBash -lc "set -euo pipefail; export PATH=/ucrt64/bin:/usr/bin; cd '$msysSource'; cmake -B '$BuildDirectory' -G Ninja -S . -DBUILD_DOCS=OFF -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF -DSUNSHINE_ASSETS_DIR=assets -DFETCH_DRIVER_DEPS=ON -DDRIVER_DEPS_REQUIRED=ON -DSUNSHINE_PUBLISHER_NAME='$PublisherName' -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile' -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile/issues'; ninja -C '$BuildDirectory' -j2; ctest --test-dir '$BuildDirectory' --output-on-failure; cmake --install '$BuildDirectory' --prefix '$BuildDirectory/inno_staging'"
 if ($LASTEXITCODE -ne 0) { throw 'Native build or staging failed.' }
 
@@ -82,12 +84,23 @@ if ($LASTEXITCODE -ne 0) { throw 'Portable package creation failed.' }
 New-Item -ItemType Directory -Force -Path $artifacts | Out-Null
 $installerArtifact = Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsInstaller.exe'
 $portableArtifact = Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsPortable.zip'
-$checksumArtifact = Join-Path $artifacts 'SHA256SUMS.txt'
-Remove-Item -LiteralPath $installerArtifact, $portableArtifact, $checksumArtifact -Force -ErrorAction SilentlyContinue
 Copy-Item -LiteralPath (Join-Path $installerOutputPath 'Sunshine.exe') -Destination $installerArtifact
 Copy-Item -LiteralPath (Join-Path $portableOutputPath 'Sunshine.zip') -Destination $portableArtifact
-Get-FileHash -Algorithm SHA256 (Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsInstaller.exe'), (Join-Path $artifacts 'Sunshine-AppDisplayProfile-WindowsPortable.zip') |
-  ForEach-Object { '{0}  {1}' -f $_.Hash.ToLowerInvariant(), (Split-Path -Leaf $_.Path) } |
-  Set-Content -Encoding ascii $checksumArtifact
+
+& (Join-Path $PSScriptRoot 'generate-checksums.ps1') -Path $artifacts -Output 'SHA256SUMS.txt'
+if ($LASTEXITCODE -ne 0) { throw 'Checksum generation failed.' }
+
+$expectedArtifacts = @(
+  'Sunshine-AppDisplayProfile-WindowsInstaller.exe',
+  'Sunshine-AppDisplayProfile-WindowsPortable.zip',
+  'SHA256SUMS.txt',
+  'checksums.json'
+)
+$actualArtifacts = @(Get-ChildItem -LiteralPath $artifacts -File | Select-Object -ExpandProperty Name)
+$unexpectedArtifacts = @($actualArtifacts | Where-Object { $_ -notin $expectedArtifacts })
+$missingArtifacts = @($expectedArtifacts | Where-Object { $_ -notin $actualArtifacts })
+if ($unexpectedArtifacts.Count -gt 0 -or $missingArtifacts.Count -gt 0) {
+  throw "Unexpected package artifact set. Missing: $($missingArtifacts -join ', '); unexpected: $($unexpectedArtifacts -join ', ')"
+}
 
 Get-ChildItem -LiteralPath $artifacts

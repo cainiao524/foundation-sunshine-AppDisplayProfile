@@ -7,9 +7,9 @@
 ### 基地版安装器打包规则
 
 - 固定使用 `scripts/build-app-display-package.ps1` 生成基地版 Inno Setup 安装器；CPack 只用于生成便携 ZIP，不用于生成安装器。
-- 每次安装前都会清空 `inno_staging`，防止旧的带哈希网页资源混入新包。
+- 每次打包前都会清空 `inno_staging`、`inno_artifacts`、`portable_artifacts` 和顶层 `artifacts`，防止旧网页资源、二进制或校验文件混入新包。
 - Inno 安装器输出在 `build-package-current/inno_artifacts`，便携包输出在 `build-package-current/portable_artifacts`；不要从旧的 `cpack_artifacts` 目录取安装器。
-- 发布前必须确认暂存目录中只有当前的 `AppEditor-*.js`、`NewDisplayOutputSelector-*.js` 资源，并检查 `artifacts/SHA256SUMS.txt` 与实际文件一致。
+- 发布前必须确认暂存目录中只有当前的 `AppEditor-*.js`、`NewDisplayOutputSelector-*.js` 资源，并检查 `artifacts/SHA256SUMS.txt`、`artifacts/checksums.json` 与实际文件一致。
 
 推荐命令：
 

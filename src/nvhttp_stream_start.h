@@ -9,7 +9,20 @@
 #include <boost/property_tree/ptree.hpp>
 #include <string>
 
+namespace display_device {
+  struct display_intent_t;
+}
+
 namespace nvhttp::stream_start {
+
+  /**
+   * @brief Whether an automatic VDD fallback preserves the launch request.
+   * @details Explicit APP display targets and no-operation layouts are authoritative.
+   */
+  bool
+  automatic_vdd_fallback_allowed_by_request(
+    const display_device::display_intent_t &intent,
+    const rtsp_stream::launch_session_t &launch_session);
 
   void
   set_sunshine_error(

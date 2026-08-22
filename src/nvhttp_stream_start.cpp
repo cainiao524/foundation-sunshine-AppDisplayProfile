@@ -27,6 +27,15 @@ namespace nvhttp::stream_start {
 
   namespace pt = boost::property_tree;
 
+  bool
+  automatic_vdd_fallback_allowed_by_request(
+    const display_device::display_intent_t &intent,
+    const rtsp_stream::launch_session_t &launch_session) {
+    return launch_session.display_target_override < 0 &&
+           intent.target != display_device::display_intent_t::target_e::vdd &&
+           intent.device_prep != display_device::parsed_config_t::device_prep_e::no_operation;
+  }
+
   namespace {
 
     void
@@ -302,14 +311,19 @@ namespace nvhttp::stream_start {
      * decision, so the fallback is skipped before display configuration starts.
      */
     bool
-    vdd_fallback_allowed(const display_device::display_intent_t &intent) {
-      if (intent.target == display_device::display_intent_t::target_e::vdd) {
-        BOOST_LOG(debug) << "Skipping automatic VDD fallback: the requested VDD is what just failed";
-        return false;
-      }
-
-      if (intent.device_prep == display_device::parsed_config_t::device_prep_e::no_operation) {
-        BOOST_LOG(info) << "Skipping automatic VDD fallback: display preparation is no_operation";
+    vdd_fallback_allowed(
+      const display_device::display_intent_t &intent,
+      const rtsp_stream::launch_session_t &launch_session) {
+      if (!automatic_vdd_fallback_allowed_by_request(intent, launch_session)) {
+        if (launch_session.display_target_override >= 0) {
+          BOOST_LOG(info) << "Skipping automatic VDD fallback: the APP display target is authoritative";
+        }
+        else if (intent.target == display_device::display_intent_t::target_e::vdd) {
+          BOOST_LOG(debug) << "Skipping automatic VDD fallback: the requested VDD is what just failed";
+        }
+        else {
+          BOOST_LOG(info) << "Skipping automatic VDD fallback: display preparation is no_operation";
+        }
         return false;
       }
 
@@ -392,42 +406,28 @@ namespace nvhttp::stream_start {
     void
     fill_vdd_recovery_session(rtsp_stream::launch_session_t &recovery_session,
       const rtsp_stream::launch_session_t &launch_session) {
-      // launch_session_t is not copy-assignable because RTSP cipher state is
-      // move-only, so copy only the launch fields needed for display probing.
-      recovery_session.id = launch_session.id;
-      recovery_session.gcm_key = launch_session.gcm_key;
-      recovery_session.iv = launch_session.iv;
-      recovery_session.av_ping_payload = launch_session.av_ping_payload;
-      recovery_session.control_connect_data = launch_session.control_connect_data;
-      recovery_session.env = launch_session.env;
-      recovery_session.host_audio = launch_session.host_audio;
-      recovery_session.unique_id = launch_session.unique_id;
+      // This temporary session only configures and probes a VDD. Keep the
+      // client and display-mode context that those operations consume; RTSP,
+      // audio, input, and process-lifetime state belongs to the real session.
+      recovery_session.client_cert_uuid = launch_session.client_cert_uuid;
       recovery_session.client_name = launch_session.client_name;
       recovery_session.width = launch_session.width;
       recovery_session.height = launch_session.height;
       recovery_session.fps = launch_session.fps;
-      recovery_session.gcmap = launch_session.gcmap;
-      recovery_session.appid = launch_session.appid;
-      recovery_session.surround_info = launch_session.surround_info;
-      recovery_session.surround_params = launch_session.surround_params;
-      recovery_session.continuous_audio = launch_session.continuous_audio;
       recovery_session.enable_hdr = launch_session.enable_hdr;
       recovery_session.enable_sops = launch_session.enable_sops;
-      recovery_session.enable_mic = launch_session.enable_mic;
       recovery_session.use_vdd = true;
+      recovery_session.display_target_override = 1;
       recovery_session.custom_screen_mode = launch_session.custom_screen_mode;
       recovery_session.custom_vdd_screen_mode = launch_session.custom_vdd_screen_mode;
+      recovery_session.resolution_change_override = launch_session.resolution_change_override;
+      recovery_session.refresh_rate_change_override = launch_session.refresh_rate_change_override;
+      recovery_session.hdr_policy_override = launch_session.hdr_policy_override;
+      recovery_session.hdr_state_override = launch_session.hdr_state_override;
+      recovery_session.manual_resolution_override = launch_session.manual_resolution_override;
+      recovery_session.manual_refresh_rate_override = launch_session.manual_refresh_rate_override;
       recovery_session.hdr_capabilities = launch_session.hdr_capabilities;
-      recovery_session.reported_hdr_capabilities = launch_session.reported_hdr_capabilities;
       recovery_session.hdr_target_source = launch_session.hdr_target_source;
-      recovery_session.rtsp_url_scheme = launch_session.rtsp_url_scheme;
-      recovery_session.rtsp_iv_counter = launch_session.rtsp_iv_counter;
-      recovery_session.setup_video = launch_session.setup_video;
-      recovery_session.setup_audio = launch_session.setup_audio;
-      recovery_session.setup_control = launch_session.setup_control;
-      recovery_session.setup_mic = launch_session.setup_mic;
-      recovery_session.control_only = launch_session.control_only;
-      recovery_session.env["SUNSHINE_CLIENT_USE_VDD"] = "true";
     }
 
     void
@@ -576,7 +576,7 @@ namespace nvhttp::stream_start {
           make_configured_probe_target(intent, make_probe_target(intent)));
       };
       const auto try_vdd = [&] {
-        if (!vdd_fallback_allowed(intent)) {
+        if (!vdd_fallback_allowed(intent, launch_session)) {
           return false;
         }
         display_recovery_attempted = true;

@@ -11,7 +11,7 @@
 
 ## 分支与远端
 
-- 用户 Fork：`https://github.com/cainiao524/foundation-sunshine`
+- 用户 Fork：`https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile`
 - 上游：`https://github.com/AlkaidLab/foundation-sunshine`
 - 开发分支：`feature/app-display-profile`
 - `master` 仅保存上游基础线，不用于开发定制功能。
