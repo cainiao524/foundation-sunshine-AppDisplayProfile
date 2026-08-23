@@ -89,20 +89,20 @@ try {
   New-Item -ItemType Directory -Path $testRoot | Out-Null
   Write-Utf8NoBom $statePath ($releaseTag + "`n")
 
-  Write-Fixture -ComponentVersion '1.1.0' -DownloadUrl $packageUrl
+  Write-Fixture -ComponentVersion '1.2.0' -DownloadUrl $packageUrl
   Invoke-PrepareManifest
   if ((Get-FileHash -LiteralPath $outputPath -Algorithm SHA256).Hash -cne
       (Get-FileHash -LiteralPath $manifestPath -Algorithm SHA256).Hash) {
     throw 'Prepared manifest differs from the verified upstream manifest.'
   }
 
-  Write-Fixture -ComponentVersion '1.1.0' -DownloadUrl 'https://github.com/AlkaidLab/foundation-sunshine/releases/download/v1.6.%E6%9D%82%E9%B1%BC/Sunshine.Ds5Sidecar.x64.zip'
+  Write-Fixture -ComponentVersion '1.2.0' -DownloadUrl 'https://github.com/AlkaidLab/foundation-sunshine/releases/download/v1.6.%E6%9D%82%E9%B1%BC/Sunshine.Ds5Sidecar.x64.zip'
   Assert-Rejected { Invoke-PrepareManifest } 'dead downstream-derived download URL'
 
   Write-Fixture -ComponentVersion '1.0.0' -DownloadUrl $packageUrl
   Assert-Rejected { Invoke-PrepareManifest } 'Control Panel component version mismatch'
 
-  Write-Fixture -ComponentVersion '1.1.0' -DownloadUrl $packageUrl
+  Write-Fixture -ComponentVersion '1.2.0' -DownloadUrl $packageUrl
   $tamperedRelease = [System.IO.File]::ReadAllText($metadataPath, [System.Text.Encoding]::UTF8) | ConvertFrom-Json
   $tamperedRelease.assets[1].digest = 'sha256:' + ('b' * 64)
   Write-Utf8NoBom $metadataPath (($tamperedRelease | ConvertTo-Json -Depth 5) + "`n")
