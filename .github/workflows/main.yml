@@ -67,10 +67,8 @@ concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
   cancel-in-progress: true
 
-# Opt all Node.js 20 actions onto the Node.js 24 runtime. GitHub will
-# eventually flip this default itself; setting it explicitly silences the
-# `actions/checkout@v4` deprecation warning emitted on every run and keeps
-# us forward-compatible with the September 2026 Node 20 removal.
+# The pinned LizardByte release action still composes a Node.js 20 action.
+# Run it on Node.js 24 ahead of GitHub's fall 2026 Node.js 20 removal.
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: 'true'
 
@@ -89,7 +87,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
 
       - name: Setup Actions artifact build
         id: setup_build_auto
@@ -155,7 +153,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup_release.outputs.release_commit }}
 
@@ -173,7 +171,7 @@ jobs:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v7
         with:
           ref: ${{ needs.setup_release.outputs.release_commit }}
           submodules: recursive
@@ -246,11 +244,22 @@ jobs:
           echo "  GCC: $(gcc --version | head -1)"
 
       - name: Setup Node.js
-        uses: actions/setup-node@v4
+        uses: actions/setup-node@v7
         with:
-          node-version: 22
+          node-version-file: .node-version
           cache: npm
           cache-dependency-path: package-lock.json
+
+      - name: Setup .NET for DualSense sidecar
+        uses: actions/setup-dotnet@v6
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Build self-contained DualSense sidecar
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
       - name: Build Web UI
         shell: pwsh
@@ -331,7 +340,7 @@ jobs:
 
       - name: Cache Inno Setup
         id: inno-cache
-        uses: actions/cache@v4
+        uses: actions/cache@v6
         with:
           path: C:\Program Files (x86)\Inno Setup 6
           key: inno-setup-6.7.3
@@ -381,6 +390,7 @@ jobs:
       - name: Package Windows
         shell: msys2 {0}
         run: |
+          set -o pipefail
           mkdir -p artifacts
           cd build
 
@@ -389,9 +399,20 @@ jobs:
           rm -rf inno_staging inno_artifacts portable_artifacts
           mkdir -p inno_artifacts portable_artifacts
           cmake --install . --prefix ./inno_staging
+          test -f ./inno_staging/tools/ds5-sidecar-package.json
+          test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
+
           INNO_OUTPUT="$(cygpath -w "$(pwd)/inno_artifacts")"
-          MSYS2_ARG_CONV_EXCL='/O' "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/O${INNO_OUTPUT}" sunshine_installer.iss
+          MSYS2_ARG_CONV_EXCL='/O' "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/O${INNO_OUTPUT}" sunshine_installer.iss | tee inno-build.log
+          grep -F "ds5-sidecar-package.json" inno-build.log
+
           cpack -G ZIP -B ./portable_artifacts --config ./CPackConfig.cmake --verbose
+          cmake -E tar tf ./portable_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
+          grep -F "Sunshine/tools/ds5-sidecar-package.json" portable-files.txt
+          if grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe" portable-files.txt; then
+            echo "The optional DualSense runtime leaked into the main portable package"
+            exit 1
+          fi
 
           mv ./inno_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./portable_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
@@ -411,8 +432,21 @@ jobs:
           fi
 
           # 重命名安装包和便携版
-          mv artifacts/sunshine-windows-installer.exe "artifacts/Sunshine.${NEWTAG}.WindowsInstaller.exe"
-          mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.WindowsPortable.zip"
+          INSTALLER_NAME="Sunshine.${NEWTAG}.WindowsInstaller.exe"
+          mv artifacts/sunshine-windows-installer.exe "artifacts/${INSTALLER_NAME}"
+          mv artifacts/sunshine-windows-portable.zip "artifacts/Sunshine.${NEWTAG}.Portable-x64.zip"
+
+          # Legacy Control Panel builds treat any release asset containing
+          # "Windows" as a full installer. Keep that marker exclusive to the
+          # actual installer so existing users can update to the fixed build.
+          for asset in artifacts/*; do
+            name=$(basename "$asset")
+            lower=${name,,}
+            if [[ "$lower" == *windows* && "$lower" != "${INSTALLER_NAME,,}" ]]; then
+              echo "Non-installer release asset would confuse legacy updaters: $name"
+              exit 1
+            fi
+          done
 
       - name: Generate Checksums
         shell: pwsh
@@ -421,12 +455,12 @@ jobs:
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Upload Artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: sunshine-windows-r${{ github.run_number }}
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
-            artifacts/Sunshine.*.WindowsPortable.zip
+            artifacts/Sunshine.*.Portable-x64.zip
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
           if-no-files-found: error

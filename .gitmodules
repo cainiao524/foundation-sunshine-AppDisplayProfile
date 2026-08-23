@@ -89,3 +89,7 @@
 	path = src_assets/common/sunshine-control-panel
 	url = https://github.com/cainiao524/sunshine-control-panel.git
 	branch = feature/app-display-profile
+[submodule "third-party/moonlight-audio-haptics"]
+	path = third-party/moonlight-audio-haptics
+	url = https://github.com/AlkaidLab/moonlight-audio-haptics.git
+	branch = main
