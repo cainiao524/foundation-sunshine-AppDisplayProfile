@@ -32,6 +32,19 @@ $installerOutputPath = Join-Path $buildPath 'inno_artifacts'
 $portableOutputPath = Join-Path $buildPath 'portable_artifacts'
 $artifacts = Join-Path $sourcePath 'artifacts'
 $controlPanelPath = Join-Path $sourcePath 'src_assets\common\sunshine-control-panel'
+$driverPinCacheKeys = @(
+  'VMOUSE_DRIVER_VERSION',
+  'VDD_DRIVER_VERSION',
+  'VDD_WIN10_DRIVER_VERSION',
+  'VDD_DRIVER_ASSET_NAME',
+  'VDD_WIN10_DRIVER_ASSET_NAME',
+  'NEFCON_VERSION',
+  'NEFCON_SHA256',
+  'VIGEMBUS_VERSION',
+  'VIGEMBUS_ASSET_NAME',
+  'VIGEMBUS_SHA256'
+)
+$driverPinResetArguments = ($driverPinCacheKeys | ForEach-Object { "-U $_" }) -join ' '
 
 foreach ($pathToClean in $stagingPath, $installerOutputPath, $portableOutputPath, $artifacts) {
   if (Test-Path -LiteralPath $pathToClean) {
@@ -109,7 +122,7 @@ $preparedManifest = Join-Path $buildPath 'ds5-sidecar-package.json'
 & (Join-Path $PSScriptRoot 'prepare-ds5-sidecar-manifest.ps1') -OutputPath $preparedManifest
 if ($LASTEXITCODE -ne 0) { throw 'DualSense manifest preparation failed.' }
 
-& $msysBash -lc "set -euo pipefail; export PATH=/ucrt64/bin:/usr/bin; cd '$msysSource'; cmake -B '$BuildDirectory' -G Ninja -S . -DBUILD_DOCS=OFF -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF -DSUNSHINE_ASSETS_DIR=assets -DFETCH_GUI=OFF -DSUNSHINE_PREFER_LOCAL_GUI=ON -DFETCH_DRIVER_DEPS=ON -DDRIVER_DEPS_REQUIRED=ON -DSUNSHINE_PUBLISHER_NAME='$PublisherName' -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile' -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile/issues'; ninja -C '$BuildDirectory' -j2; ctest --test-dir '$BuildDirectory' --output-on-failure; cmake --install '$BuildDirectory' --prefix '$BuildDirectory/inno_staging'"
+& $msysBash -lc "set -euo pipefail; export PATH=/ucrt64/bin:/usr/bin; cd '$msysSource'; cmake $driverPinResetArguments -B '$BuildDirectory' -G Ninja -S . -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF -DSUNSHINE_ASSETS_DIR=assets -DFETCH_GUI=OFF -DSUNSHINE_PREFER_LOCAL_GUI=ON -DFETCH_DRIVER_DEPS=ON -DDRIVER_DEPS_REQUIRED=ON -DSUNSHINE_PUBLISHER_NAME='$PublisherName' -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile' -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile/issues'; ninja -C '$BuildDirectory' -j2; ctest --test-dir '$BuildDirectory' --output-on-failure; cmake --install '$BuildDirectory' --prefix '$BuildDirectory/inno_staging'"
 if ($LASTEXITCODE -ne 0) { throw 'Native build or staging failed.' }
 
 $stagedManifest = Join-Path $stagingPath 'tools\ds5-sidecar-package.json'
