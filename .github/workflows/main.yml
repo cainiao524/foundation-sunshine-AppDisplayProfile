@@ -449,7 +449,6 @@ jobs:
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
       - name: Generate Release Notes
-        if: needs.setup_release.outputs.publish_release == 'true'
         shell: pwsh
         env:
           RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}
