@@ -301,17 +301,23 @@ namespace display_device {
       const auto modified_ids { get_device_ids_from_topology(data.topology.modified) };
       device_ids.insert(modified_ids.begin(), modified_ids.end());
 
-      for (const auto &[device_id, _] : data.original_modes) {
-        device_ids.insert(device_id);
-      }
-      for (const auto &[device_id, _] : data.original_hdr_states) {
-        device_ids.insert(device_id);
-      }
-      if (!data.original_primary_display.empty()) {
-        device_ids.insert(data.original_primary_display);
-      }
-      if (data.color_profile && !data.color_profile->device_id.empty()) {
-        device_ids.insert(data.color_profile->device_id);
+      // Topology is authoritative for physical display cardinality. Mode/HDR maps may contain
+      // a second route alias after a failed dual-GPU restore; treating that alias as another
+      // physical display prevents the real topology id from being remapped. Legacy data with no
+      // topology still falls back to the keyed snapshots so it remains recoverable.
+      if (device_ids.empty()) {
+        for (const auto &[device_id, _] : data.original_modes) {
+          device_ids.insert(device_id);
+        }
+        for (const auto &[device_id, _] : data.original_hdr_states) {
+          device_ids.insert(device_id);
+        }
+        if (!data.original_primary_display.empty()) {
+          device_ids.insert(data.original_primary_display);
+        }
+        if (data.color_profile && !data.color_profile->device_id.empty()) {
+          device_ids.insert(data.color_profile->device_id);
+        }
       }
 
       for (const auto &vdd_id : vdd_device_ids) {
@@ -838,10 +844,33 @@ namespace display_device {
 
       const auto expected_device_ids = collect_persisted_device_ids(data, vdd_device_ids);
       const auto current_identities = collect_device_identities(*available_devices);
-      const auto remap_result = resolve_device_id_remaps(
+      auto saved_identities = data.device_identities;
+      auto remap_result = resolve_device_id_remaps(
         expected_device_ids,
-        data.device_identities,
+        saved_identities,
         current_identities);
+
+      if (!remap_result.unresolved_device_ids.empty()) {
+        const auto historical_identities = w_utils::get_historical_physical_device_identities();
+        bool migrated_identity = false;
+        for (const auto &device_id : remap_result.unresolved_device_ids) {
+          if (const auto historical = historical_identities.find(device_id);
+              historical != historical_identities.end() && !historical->second.empty()) {
+            BOOST_LOG(info) << "Migrating persisted physical display identity from historical PnP data: " << device_id;
+            saved_identities[device_id] = historical->second;
+            data.device_identities[device_id] = historical->second;
+            migrated_identity = true;
+            data_modified = true;
+          }
+        }
+
+        if (migrated_identity) {
+          remap_result = resolve_device_id_remaps(
+            expected_device_ids,
+            saved_identities,
+            current_identities);
+        }
+      }
 
       if (!remap_result.unresolved_device_ids.empty()) {
         BOOST_LOG(warning) << "Cannot uniquely resolve persisted physical display ids after a GPU path change; keeping restore data for retry";

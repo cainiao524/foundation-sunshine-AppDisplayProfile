@@ -7,6 +7,7 @@
 #include "src/display_device/vdd_ioctl.h"
 #include "src/display_device/vdd_utils.h"
 #include "src/platform/windows/display_device/settings_topology.h"
+#include "src/platform/windows/display_device/windows_utils.h"
 #include "src/platform/windows/vdd_frame_channel.h"
 
 namespace {
@@ -147,6 +148,38 @@ TEST(VddRestoreSafety, RemovesOnlyConfirmedVddIds) {
   EXPECT_TRUE(removed.contains("vdd"));
   EXPECT_TRUE(removed.contains("vdd-old"));
   EXPECT_EQ(topology, (active_topology_t { { "missing-physical" }, { "external" } }));
+}
+
+TEST(VddRestoreSafety, PhysicalIdentityIgnoresGpuSpecificEdidExtensionBlocks) {
+  using display_device::w_utils::make_physical_monitor_identity;
+
+  std::vector<BYTE> first_route_edid(256, 0);
+  std::vector<BYTE> second_route_edid(384, 0);
+  for (std::size_t index = 0; index < 256; ++index) {
+    first_route_edid[index] = static_cast<BYTE>(index);
+    second_route_edid[index] = static_cast<BYTE>(index);
+  }
+  std::fill(second_route_edid.begin() + 256, second_route_edid.end(), 0xA5);
+
+  const auto first_identity = make_physical_monitor_identity(
+    L"DISPLAY\\BOE0B8B\\4&ROUTE_A&0&UID1",
+    first_route_edid);
+  const auto second_identity = make_physical_monitor_identity(
+    L"DISPLAY\\BOE0B8B\\5&ROUTE_B&0&UID2",
+    second_route_edid);
+
+  ASSERT_FALSE(first_identity.empty());
+  EXPECT_EQ(first_identity, second_identity);
+}
+
+TEST(VddRestoreSafety, PhysicalIdentityChangesForAnotherMonitorHardwareId) {
+  using display_device::w_utils::make_physical_monitor_identity;
+
+  std::vector<BYTE> edid(128, 0x5A);
+  EXPECT_NE(
+    make_physical_monitor_identity(L"DISPLAY\\BOE0B8B\\route", edid),
+    make_physical_monitor_identity(L"DISPLAY\\DELD0E6\\route", edid));
+  EXPECT_TRUE(make_physical_monitor_identity(L"DISPLAY\\BOE0B8B\\route", std::vector<BYTE>(127, 0)).empty());
 }
 
 TEST(VddCursorExportSafety, ParsesPersistedEnabledValues) {

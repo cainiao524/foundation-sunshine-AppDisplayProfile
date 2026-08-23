@@ -207,13 +207,30 @@ namespace display_device::w_utils {
   get_device_id(const DISPLAYCONFIG_PATH_INFO &path);
 
   /**
+   * @brief Build a route-independent physical monitor identity from its instance id and EDID.
+   * @note Only the base 128-byte EDID block is used because GPU routes may expose different
+   *       extension blocks for the same panel.
+   */
+  std::string
+  make_physical_monitor_identity(
+    std::wstring_view instance_id,
+    const std::vector<BYTE> &edid);
+
+  /**
    * @brief Get a route-independent identity for a physical monitor.
-   * @returns A stable identity derived from the Windows device container, or an empty string.
+   * @returns A stable identity derived from monitor hardware and EDID, or an empty string.
    * @note This identity is used only to match a monitor after a dual-GPU path switch. It does not
    *       replace Sunshine's public device id.
    */
   std::string
   get_physical_device_identity(const DISPLAYCONFIG_PATH_INFO &path);
+
+  /**
+   * @brief Enumerate route-independent identities for current and historical monitor instances.
+   * @returns Map keyed by Sunshine's public device id for each recoverable PnP monitor instance.
+   */
+  device_identity_map_t
+  get_historical_physical_device_identities();
 
   std::string
   get_device_driver_path(const DISPLAYCONFIG_PATH_INFO &path);

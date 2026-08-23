@@ -604,12 +604,6 @@ namespace platf::dxgi {
     env_width = GetSystemMetrics(SM_CXVIRTUALSCREEN);
     env_height = GetSystemMetrics(SM_CYVIRTUALSCREEN);
 
-    HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
-    if (FAILED(status)) {
-      BOOST_LOG(error) << "Failed to create DXGIFactory1 [0x"sv << util::hex(status).to_string_view() << ']';
-      return -1;
-    }
-
     auto adapter_name = from_utf8(config::video.adapter_name);
     const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
@@ -621,25 +615,36 @@ namespace platf::dxgi {
       BOOST_LOG(debug) << "[Display Init] Initializing display: " << display_name;
     }
 
+    HRESULT status;
     adapter_t::pointer adapter_p;
+    // VDD creation and topology changes can invalidate the DXGI adapter/output
+    // snapshot. Recreate the factory for every retry so capture does not keep
+    // using an enumeration from before the display switch.
     // Tries:
     //   0 - normal pass with the configured adapter filter (if any).
-    //   1 - same filter, but after nudging the display power state.
-    //   2 - last resort: if the configured adapter never matched, drop the
-    //       filter and accept any adapter so a misconfigured / stale
-    //       adapter_name doesn't make capture init fail outright.
-    for (int tries = 0; tries < 3 && !output; ++tries) {
-      if (tries == 1) {
+    //   1 - same filter after nudging the display power state.
+    //   2 - auto-select after the display switch settles.
+    //   3 - final auto-select retry for a still-rebuilding VDD output.
+    for (int tries = 0; tries < 4 && !output; ++tries) {
+      if (tries > 0) {
         SetThreadExecutionState(ES_DISPLAY_REQUIRED);
-        Sleep(500);
+        Sleep(tries == 1 ? 500 : 250);
       }
-      if (tries == 2) {
-        if (adapter_name.empty()) {
-          break;
-        }
+
+      factory.reset();
+      HRESULT status = CreateDXGIFactory1(IID_IDXGIFactory1, (void **) &factory);
+      if (FAILED(status)) {
+        BOOST_LOG(warning) << "[Display Init] Failed to refresh DXGIFactory1 on retry " << (tries + 1)
+                           << " [0x"sv << util::hex(status).to_string_view() << ']';
+        continue;
+      }
+
+      if (tries == 2 && !adapter_name.empty()) {
         BOOST_LOG(warning) << "[Display Init] Configured adapter ["sv << to_utf8(adapter_name) << "] did not match any enumerated adapter; falling back to auto-select"sv;
         adapter_name.clear();
       }
+
+      BOOST_LOG(debug) << "[Display Init] Refreshing adapter/output enumeration (attempt " << (tries + 1) << "/4)"sv;
 
       for (int x = 0; factory->EnumAdapters1(x, &adapter_p) != DXGI_ERROR_NOT_FOUND; ++x) {
         dxgi::adapter_t adapter_tmp { adapter_p };

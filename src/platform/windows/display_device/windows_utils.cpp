@@ -282,6 +282,48 @@ namespace display_device::w_utils {
       return !edid.empty();
     }
 
+    bool
+    make_device_id_data(
+      const std::wstring &instance_id,
+      const std::vector<BYTE> &edid,
+      std::vector<BYTE> &device_id_data) {
+      auto unstable_part_index = instance_id.find_first_of(L'&', 0);
+      if (unstable_part_index != std::wstring::npos) {
+        unstable_part_index = instance_id.find_first_of(L'&', unstable_part_index + 1);
+      }
+
+      if (unstable_part_index == std::wstring::npos) {
+        BOOST_LOG(error) << "Failed to split off the stable part from instance id string " << platf::to_utf8(instance_id);
+        return false;
+      }
+
+      const auto semi_stable_part_index = instance_id.find_first_of(L'&', unstable_part_index + 1);
+      if (semi_stable_part_index == std::wstring::npos) {
+        BOOST_LOG(error) << "Failed to split off the semi-stable part from instance id string " << platf::to_utf8(instance_id);
+        return false;
+      }
+
+      device_id_data = edid;
+      device_id_data.insert(std::end(device_id_data),
+        reinterpret_cast<const BYTE *>(instance_id.data()),
+        reinterpret_cast<const BYTE *>(instance_id.data() + unstable_part_index));
+      device_id_data.insert(std::end(device_id_data),
+        reinterpret_cast<const BYTE *>(instance_id.data() + semi_stable_part_index),
+        reinterpret_cast<const BYTE *>(instance_id.data() + instance_id.size()));
+      return true;
+    }
+
+    std::string
+    make_uuid(const std::vector<BYTE> &data, std::string_view prefix = {}) {
+      if (data.empty()) {
+        return {};
+      }
+
+      static constexpr boost::uuids::uuid ns_id {};
+      const auto uuid { boost::uuids::name_generator_sha1 { ns_id }(data.data(), data.size()) };
+      return std::string { prefix } + "{" + boost::uuids::to_string(uuid) + "}";
+    }
+
     std::string
     get_driver_key(HDEVINFO dev_info_handle, SP_DEVINFO_DATA &dev_info_data) {
       DWORD dataType;
@@ -424,35 +466,15 @@ namespace display_device::w_utils {
           break;
         }
 
-        if (!get_device_edid(dev_info_handle, dev_info_data, device_id_data)) {
+        std::vector<BYTE> edid;
+        if (!get_device_edid(dev_info_handle, dev_info_data, edid)) {
           // Error already logged
           break;
         }
 
-        // We are going to discard the unstable parts of the instance ID and merge the stable parts with the edid buffer (if available)
-        auto unstable_part_index = instance_id.find_first_of(L'&', 0);
-        if (unstable_part_index != std::wstring::npos) {
-          unstable_part_index = instance_id.find_first_of(L'&', unstable_part_index + 1);
-        }
-
-        if (unstable_part_index == std::wstring::npos) {
-          BOOST_LOG(error) << "Failed to split off the stable part from instance id string " << platf::to_utf8(instance_id);
+        if (!make_device_id_data(instance_id, edid, device_id_data)) {
           break;
         }
-
-        auto semi_stable_part_index = instance_id.find_first_of(L'&', unstable_part_index + 1);
-        if (semi_stable_part_index == std::wstring::npos) {
-          BOOST_LOG(error) << "Failed to split off the semi-stable part from instance id string " << platf::to_utf8(instance_id);
-          break;
-        }
-
-        BOOST_LOG(verbose) << "Creating device id for path " << platf::to_utf8(device_path) << " from EDID and instance ID: " << platf::to_utf8({ std::begin(instance_id), std::begin(instance_id) + unstable_part_index }) << platf::to_utf8({ std::begin(instance_id) + semi_stable_part_index, std::end(instance_id) });
-        device_id_data.insert(std::end(device_id_data),
-          reinterpret_cast<const BYTE *>(instance_id.data()),
-          reinterpret_cast<const BYTE *>(instance_id.data() + unstable_part_index));
-        device_id_data.insert(std::end(device_id_data),
-          reinterpret_cast<const BYTE *>(instance_id.data() + semi_stable_part_index),
-          reinterpret_cast<const BYTE *>(instance_id.data() + instance_id.size()));
         break;
       }
     }
@@ -465,9 +487,34 @@ namespace display_device::w_utils {
         reinterpret_cast<const BYTE *>(device_path.data() + device_path.size()));
     }
 
-    static constexpr boost::uuids::uuid ns_id {};  // null namespace = no salt
-    const auto boost_uuid { boost::uuids::name_generator_sha1 { ns_id }(device_id_data.data(), device_id_data.size()) };
-    return "{" + boost::uuids::to_string(boost_uuid) + "}";
+    return make_uuid(device_id_data);
+  }
+
+  std::string
+  make_physical_monitor_identity(
+    std::wstring_view instance_id,
+    const std::vector<BYTE> &edid) {
+    constexpr std::size_t base_edid_size { 128 };
+    if (edid.size() < base_edid_size) {
+      return {};
+    }
+
+    const auto first_separator = instance_id.find(L'\\');
+    const auto hardware_id_end = first_separator == std::wstring_view::npos ?
+                                   std::wstring_view::npos :
+                                   instance_id.find(L'\\', first_separator + 1);
+    if (hardware_id_end == std::wstring_view::npos) {
+      return {};
+    }
+
+    std::vector<BYTE> identity_data {
+      edid.begin(),
+      edid.begin() + base_edid_size
+    };
+    identity_data.insert(identity_data.end(),
+      reinterpret_cast<const BYTE *>(instance_id.data()),
+      reinterpret_cast<const BYTE *>(instance_id.data() + hardware_id_end));
+    return make_uuid(identity_data, "edid:");
   }
 
   std::string
@@ -513,6 +560,15 @@ namespace display_device::w_utils {
         continue;
       }
 
+      std::wstring instance_id;
+      std::vector<BYTE> edid;
+      if (get_device_instance_id(dev_info_handle, dev_info_data, instance_id) &&
+          get_device_edid(dev_info_handle, dev_info_data, edid)) {
+        if (const auto identity = make_physical_monitor_identity(instance_id, edid); !identity.empty()) {
+          return identity;
+        }
+      }
+
       GUID container_id {};
       DEVPROPTYPE property_type {};
       if (!SetupDiGetDevicePropertyW(
@@ -529,16 +585,66 @@ namespace display_device::w_utils {
         return {};
       }
 
-      static constexpr boost::uuids::uuid ns_id {};
-      const auto identity_uuid {
-        boost::uuids::name_generator_sha1 { ns_id }(
-          reinterpret_cast<const char *>(&container_id),
-          sizeof(container_id))
-      };
-      return "container:{" + boost::uuids::to_string(identity_uuid) + "}";
+      const auto *container_bytes = reinterpret_cast<const BYTE *>(&container_id);
+      return make_uuid(
+        std::vector<BYTE> { container_bytes, container_bytes + sizeof(container_id) },
+        "container:");
     }
 
     return {};
+  }
+
+  device_identity_map_t
+  get_historical_physical_device_identities() {
+    static const GUID monitor_guid { 0xe6f07b5f, 0xee97, 0x4a90, { 0xb0, 0x76, 0x33, 0xf5, 0x7b, 0xf4, 0xea, 0xa7 } };
+    device_identity_map_t identities;
+    HDEVINFO dev_info_handle { SetupDiGetClassDevsW(&monitor_guid, nullptr, nullptr, DIGCF_DEVICEINTERFACE) };
+    if (dev_info_handle == INVALID_HANDLE_VALUE) {
+      return identities;
+    }
+
+    const auto dev_info_handle_cleanup {
+      util::fail_guard([&dev_info_handle]() {
+        if (!SetupDiDestroyDeviceInfoList(dev_info_handle)) {
+          BOOST_LOG(error) << get_error_string(static_cast<LONG>(GetLastError())) << " \"SetupDiDestroyDeviceInfoList\" failed.";
+        }
+      })
+    };
+
+    SP_DEVICE_INTERFACE_DATA dev_interface_data {};
+    dev_interface_data.cbSize = sizeof(dev_interface_data);
+    for (DWORD monitor_index = 0;; ++monitor_index) {
+      if (!SetupDiEnumDeviceInterfaces(dev_info_handle, nullptr, &monitor_guid, monitor_index, &dev_interface_data)) {
+        if (GetLastError() == ERROR_NO_MORE_ITEMS) {
+          break;
+        }
+        continue;
+      }
+
+      std::wstring dev_interface_path;
+      SP_DEVINFO_DATA dev_info_data {};
+      dev_info_data.cbSize = sizeof(dev_info_data);
+      if (!get_device_interface_detail(dev_info_handle, dev_interface_data, dev_interface_path, dev_info_data)) {
+        continue;
+      }
+
+      std::wstring instance_id;
+      std::vector<BYTE> edid;
+      std::vector<BYTE> device_id_data;
+      if (!get_device_instance_id(dev_info_handle, dev_info_data, instance_id) ||
+          !get_device_edid(dev_info_handle, dev_info_data, edid) ||
+          !make_device_id_data(instance_id, edid, device_id_data)) {
+        continue;
+      }
+
+      const auto device_id = make_uuid(device_id_data);
+      const auto identity = make_physical_monitor_identity(instance_id, edid);
+      if (!device_id.empty() && !identity.empty()) {
+        identities.emplace(device_id, identity);
+      }
+    }
+
+    return identities;
   }
 
   std::string
