@@ -100,7 +100,10 @@ gh api repos/cainiao524/foundation-sunshine-AppDisplayProfile/git/ref/tags/v1.0.
 - `VDD helper smoke tests` 成功；
 - `Windows` 成功；
 - Windows 原生测试、安装包、便携包、`SHA256SUMS.txt` 和 `checksums.json` 均已生成；
+- 发布说明已由 `scripts/generate-app-display-release-notes.ps1` 根据发布标签、上游正式版记录、精确提交和最终产物校验值生成，并由 GitHub 自动追加自上一个正式版本以来的变更记录；
 - GitHub Release 不是草稿，也不是预发布。
+
+正式发布说明必须在最终重命名和校验值生成后创建。说明文件只作为 Release 正文输入，不得加入发布资产；正式产物仍然只能包含安装版、便携版、`SHA256SUMS.txt` 和 `checksums.json`。
 
 ## Clash 代理
 

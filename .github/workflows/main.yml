@@ -77,9 +77,7 @@ jobs:
     name: Setup Release
     outputs:
       publish_release: ${{ steps.setup_build_auto.outputs.publish_release || steps.setup_release_manual.outputs.publish_release }}
-      release_body: ${{ steps.setup_build_auto.outputs.release_body || steps.setup_release_manual.outputs.release_body }}
       release_commit: ${{ steps.setup_build_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
-      release_generate_release_notes: ${{ steps.setup_build_auto.outputs.release_generate_release_notes || steps.setup_release_manual.outputs.release_generate_release_notes }}
       release_name: ${{ steps.setup_build_auto.outputs.release_name || steps.setup_release_manual.outputs.release_name }}
       release_tag: ${{ steps.setup_build_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
     permissions:
@@ -96,9 +94,7 @@ jobs:
         run: |
           VERSION="ci-${GITHUB_RUN_NUMBER}-${GITHUB_SHA:0:8}"
           echo "publish_release=false" >> "$GITHUB_OUTPUT"
-          echo "release_body=Actions artifact build (${GITHUB_REF_NAME})" >> "$GITHUB_OUTPUT"
           echo "release_commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
-          echo "release_generate_release_notes=false" >> "$GITHUB_OUTPUT"
           echo "release_name=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${VERSION}" >> "$GITHUB_OUTPUT"
 
@@ -141,9 +137,7 @@ jobs:
             fi
           fi
           echo "publish_release=${PUBLISH_RELEASE}" >> $GITHUB_OUTPUT
-          echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
           echo "release_commit=${SOURCE_REF}" >> $GITHUB_OUTPUT
-          echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
           echo "release_name=$NAME" >> $GITHUB_OUTPUT
           echo "release_tag=$TAG" >> $GITHUB_OUTPUT
 
@@ -454,6 +448,19 @@ jobs:
           # Generate SHA256 checksums after the assets have their final names.
           .\scripts\generate-checksums.ps1 -Path .\artifacts -Output "SHA256SUMS.txt"
 
+      - name: Generate Release Notes
+        if: needs.setup_release.outputs.publish_release == 'true'
+        shell: pwsh
+        env:
+          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}
+        run: |
+          $releaseCommit = (git rev-parse HEAD).Trim()
+          .\scripts\generate-app-display-release-notes.ps1 `
+            -ReleaseTag $env:RELEASE_TAG `
+            -ReleaseCommit $releaseCommit `
+            -ChecksumsPath .\artifacts\checksums.json `
+            -OutputPath .\release-notes.md
+
       - name: Upload Artifacts
         uses: actions/upload-artifact@v7
         with:
@@ -472,9 +479,9 @@ jobs:
           allowUpdates: false
           artifactErrorsFailBuild: true
           artifacts: "artifacts/*"
-          body: ${{ needs.setup_release.outputs.release_body }}
+          bodyFile: release-notes.md
           commit: ${{ needs.setup_release.outputs.release_commit }}
-          generateReleaseNotes: ${{ needs.setup_release.outputs.release_generate_release_notes }}
+          generateReleaseNotes: true
           name: ${{ needs.setup_release.outputs.release_name }}
           prerelease: false
           tag: ${{ needs.setup_release.outputs.release_tag }}
