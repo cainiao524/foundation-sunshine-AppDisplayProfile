@@ -8,8 +8,11 @@
 
 - 固定使用 `scripts/build-app-display-package.ps1` 生成基地版 Inno Setup 安装器；CPack 只用于生成便携 ZIP，不用于生成安装器。
 - 每次打包前都会清空 `inno_staging`、`inno_artifacts`、`portable_artifacts` 和顶层 `artifacts`，防止旧网页资源、二进制或校验文件混入新包。
+- Windows 主包必须构建仓库锁定的 `sunshine-control-panel` 子模块，禁止从外部仓库下载“最新” GUI；否则 DualSense 组件协议和清单版本会发生漂移。
+- DualSense Sidecar 继续作为上游正式版的按需下载组件。主包只携带经 GitHub Release 元数据校验的官方清单，不重新构建没有发布地址的下游 Sidecar，也不把完整运行时塞入安装版或便携版。
 - Inno 安装器输出在 `build-package-current/inno_artifacts`，便携包输出在 `build-package-current/portable_artifacts`；不要从旧的 `cpack_artifacts` 目录取安装器。
 - 发布前必须确认暂存目录中只有当前的 `AppEditor-*.js`、`NewDisplayOutputSelector-*.js` 资源，并检查 `artifacts/SHA256SUMS.txt`、`artifacts/checksums.json` 与实际文件一致。
+- 发布前还必须确认安装版暂存目录与便携包中的 `tools/ds5-sidecar-package.json` 完全一致，下载地址指向 `.github/upstream-stable-release` 记录的正式版，且 `assets/gui/sunshine-gui.exe` 与锁定子模块的本次构建产物完全一致。
 
 推荐命令：
 

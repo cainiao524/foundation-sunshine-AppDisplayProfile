@@ -244,16 +244,36 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Setup .NET for DualSense sidecar
-        uses: actions/setup-dotnet@v6
+      - name: Setup Rust for pinned Control Panel
+        uses: dtolnay/rust-toolchain@stable
         with:
-          dotnet-version: '10.0.x'
+          targets: x86_64-pc-windows-msvc
 
-      - name: Build self-contained DualSense sidecar
+      - name: Build and test pinned Control Panel
+        shell: pwsh
+        run: |
+          Push-Location .\src_assets\common\sunshine-control-panel
+          try {
+            npm ci
+            npm run build:renderer
+            npm run test:renderer
+            cargo test --release --manifest-path .\src-tauri\Cargo.toml --target x86_64-pc-windows-msvc
+            cargo build --release --manifest-path .\src-tauri\Cargo.toml --target x86_64-pc-windows-msvc
+            if (-not (Test-Path -LiteralPath .\src-tauri\target\x86_64-pc-windows-msvc\release\sunshine-gui.exe -PathType Leaf)) {
+              throw 'Pinned Control Panel build did not produce sunshine-gui.exe.'
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
+      - name: Test and prepare pinned DualSense manifest
         shell: pwsh
         env:
-          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          .\scripts\test-prepare-ds5-sidecar-manifest.ps1
+          .\scripts\prepare-ds5-sidecar-manifest.ps1 -OutputPath .\build\ds5-sidecar-package.json
 
       - name: Build Web UI
         shell: pwsh
@@ -308,6 +328,8 @@ jobs:
             -DBUILD_TESTS=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
+            -DFETCH_GUI=OFF \
+            -DSUNSHINE_PREFER_LOCAL_GUI=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DSUNSHINE_ASSETS_DIR=assets \
@@ -395,6 +417,9 @@ jobs:
           cmake --install . --prefix ./inno_staging
           test -f ./inno_staging/tools/ds5-sidecar-package.json
           test ! -e ./inno_staging/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe
+          cmp ./ds5-sidecar-package.json ./inno_staging/tools/ds5-sidecar-package.json
+          test -f ./inno_staging/assets/gui/sunshine-gui.exe
+          cmp ../src_assets/common/sunshine-control-panel/src-tauri/target/x86_64-pc-windows-msvc/release/sunshine-gui.exe ./inno_staging/assets/gui/sunshine-gui.exe
 
           INNO_OUTPUT="$(cygpath -w "$(pwd)/inno_artifacts")"
           MSYS2_ARG_CONV_EXCL='/O' "/c/Program Files (x86)/Inno Setup 6/ISCC.exe" "/O${INNO_OUTPUT}" sunshine_installer.iss | tee inno-build.log
@@ -403,10 +428,18 @@ jobs:
           cpack -G ZIP -B ./portable_artifacts --config ./CPackConfig.cmake --verbose
           cmake -E tar tf ./portable_artifacts/Sunshine.zip | tr '\\' '/' > portable-files.txt
           grep -F "Sunshine/tools/ds5-sidecar-package.json" portable-files.txt
+          grep -F "Sunshine/assets/gui/sunshine-gui.exe" portable-files.txt
           if grep -F "Sunshine/tools/sunshine-ds5-sidecar/Sunshine.Ds5Sidecar.exe" portable-files.txt; then
             echo "The optional DualSense runtime leaked into the main portable package"
             exit 1
           fi
+          rm -rf portable-verify
+          mkdir portable-verify
+          cd portable-verify
+          cmake -E tar xf ../portable_artifacts/Sunshine.zip
+          cmp ../ds5-sidecar-package.json ./Sunshine/tools/ds5-sidecar-package.json
+          cmp ../../src_assets/common/sunshine-control-panel/src-tauri/target/x86_64-pc-windows-msvc/release/sunshine-gui.exe ./Sunshine/assets/gui/sunshine-gui.exe
+          cd ..
 
           mv ./inno_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./portable_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
