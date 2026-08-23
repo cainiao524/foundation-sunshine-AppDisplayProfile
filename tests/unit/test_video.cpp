@@ -152,11 +152,33 @@ TEST(VideoBitrate, CapsInitialEncoderBitrateUsingTotalBitrateLimit) {
   EXPECT_EQ(video::cap_initial_encoder_bitrate(40000, 50000, 10), 40000);
 }
 
-TEST(VideoDisplayTarget, ExplicitTargetNeverFallsBackToAnotherDisplay) {
+TEST(VideoDisplayTarget, ExplicitTargetNeverFallsBackWhenBroadEnumerationMissesIt) {
   const std::vector<std::string> displays { R"(\\.\DISPLAY1)", R"(\\.\DISPLAY5)", R"(\\.\DISPLAY9)" };
 
-  EXPECT_FALSE(video::select_display_target(displays, 0, R"(\\.\DISPLAY10)").has_value());
+  const auto selected = video::select_display_target(displays, 0, R"(\\.\DISPLAY10)");
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(selected->display_name, R"(\\.\DISPLAY10)");
+  EXPECT_EQ(selected->index, -1);
   EXPECT_EQ(displays, (std::vector<std::string> { R"(\\.\DISPLAY1)", R"(\\.\DISPLAY5)", R"(\\.\DISPLAY9)" }));
+}
+
+TEST(VideoDisplayTarget, ExplicitTargetDoesNotRequireBroadEnumeration) {
+  const std::vector<std::string> displays;
+
+  const auto selected = video::select_display_target(displays, -1, R"(\\.\DISPLAY9)");
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(selected->display_name, R"(\\.\DISPLAY9)");
+  EXPECT_EQ(selected->index, -1);
+}
+
+TEST(VideoDisplayTarget, HandsOffOnlyExactVddProbeDisplaysToDdxRuntime) {
+  EXPECT_TRUE(video::should_handoff_vdd_probe_display(video::probe_target_policy_e::vdd_compatible, {}));
+  EXPECT_TRUE(video::should_handoff_vdd_probe_display(video::probe_target_policy_e::vdd_compatible, "ddx"));
+  EXPECT_TRUE(video::should_handoff_vdd_probe_display(video::probe_target_policy_e::vdd_compatible, "wgc", true));
+  EXPECT_FALSE(video::should_handoff_vdd_probe_display(video::probe_target_policy_e::exact, "ddx"));
+  EXPECT_FALSE(video::should_handoff_vdd_probe_display(video::probe_target_policy_e::backend_autoselect, "ddx"));
+  EXPECT_FALSE(video::should_handoff_vdd_probe_display(video::probe_target_policy_e::vdd_compatible, "vdd"));
+  EXPECT_FALSE(video::should_handoff_vdd_probe_display(video::probe_target_policy_e::vdd_compatible, "wgc"));
 }
 
 TEST(VideoDisplayTarget, SelectsReenumeratedVddNameWithoutChangingPhysicalDisplays) {

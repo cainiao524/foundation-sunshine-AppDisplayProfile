@@ -44,6 +44,17 @@ namespace platf {
 namespace platf::dxgi {
   namespace bp = boost::process::v1;
 
+  bool
+  is_exact_vdd_capture_request(std::string_view requested_display_name, std::string_view current_vdd_device_id) {
+    return requested_display_name == VDD_NAME ||
+           (!current_vdd_device_id.empty() && requested_display_name == current_vdd_device_id);
+  }
+
+  bool
+  should_reinitialize_for_factory_change(bool factory_is_current, bool exact_vdd_capture) {
+    return !factory_is_current && !exact_vdd_capture;
+  }
+
   /**
    * DDAPI-specific initialization goes here.
    */
@@ -321,10 +332,18 @@ namespace platf::dxgi {
 
     while (true) {
       // This will return false if the HDR state changes or for any number of other
-      // display or GPU changes. We should reinit to examine the updated state of
-      // the display subsystem. It is recommended to call this once per frame.
-      if (!factory->IsCurrent()) {
+      // display or GPU changes. Physical capture should reinitialize immediately.
+      // An exact VDD capture keeps its existing duplication until the duplication
+      // itself reports a real capture failure, because a fresh factory can
+      // transiently lose the VDD on hybrid-GPU systems.
+      const bool factory_is_current = factory->IsCurrent();
+      if (should_reinitialize_for_factory_change(factory_is_current, exact_vdd_capture)) {
         return platf::capture_e::reinit;
+      }
+      if (!factory_is_current && !stale_factory_preservation_logged) {
+        BOOST_LOG(warning) << "[Display Capture] DXGI factory changed while capturing the exact VDD; "sv
+                           << "keeping the existing duplication until it reports an actual capture failure"sv;
+        stale_factory_preservation_logged = true;
       }
 
       // Check for HDR metadata changes periodically
@@ -608,6 +627,13 @@ namespace platf::dxgi {
     const bool is_rdp_session = !is_running_as_system_user && display_device::w_utils::is_any_rdp_session_active();
     auto output_name = is_rdp_session ? std::wstring {} : from_utf8(display_name);
 
+    std::string current_vdd_device_id;
+    if (!config.display_name.empty() && config.display_name != VDD_NAME) {
+      current_vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    }
+    exact_vdd_capture = !is_rdp_session && is_exact_vdd_capture_request(config.display_name, current_vdd_device_id);
+    stale_factory_preservation_logged = false;
+
     if (is_rdp_session) {
       BOOST_LOG(info) << "[Display Init] RDP session detected - using first available RDP virtual display";
     }
@@ -640,7 +666,9 @@ namespace platf::dxgi {
       }
 
       if (tries == 2 && !adapter_name.empty()) {
-        BOOST_LOG(warning) << "[Display Init] Configured adapter ["sv << to_utf8(adapter_name) << "] did not match any enumerated adapter; falling back to auto-select"sv;
+        BOOST_LOG(warning) << "[Display Init] Configured adapter ["sv << to_utf8(adapter_name)
+                           << "] did not expose requested output ["sv << to_utf8(output_name)
+                           << "]; retrying across all adapters"sv;
         adapter_name.clear();
       }
 
@@ -902,6 +930,24 @@ namespace platf::dxgi {
     cached_hdr_metadata.reset();
     last_hdr_check_time = std::chrono::steady_clock::now();
 
+    return 0;
+  }
+
+  int
+  display_base_t::adopt_runtime_capture_config(const ::video::config_t &config, bool exact_vdd) {
+    client_frame_rate = config.framerate;
+    if (config.frameRateNum > 0 && config.frameRateDen > 0) {
+      client_frame_rate_rational = {
+        static_cast<UINT>(config.frameRateNum),
+        static_cast<UINT>(config.frameRateDen)
+      };
+    }
+    else {
+      client_frame_rate_rational = { static_cast<UINT>(config.framerate), 1 };
+    }
+
+    exact_vdd_capture = exact_vdd;
+    stale_factory_preservation_logged = false;
     return 0;
   }
 

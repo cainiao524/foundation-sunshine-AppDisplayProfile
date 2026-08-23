@@ -9,6 +9,7 @@
 #include <cstdint>
 #include <memory>
 #include <optional>
+#include <string_view>
 #include <vector>
 
 #include <d3d11.h>
@@ -35,6 +36,21 @@ namespace display_device::vdd_ioctl {
 
 namespace platf::dxgi {
   extern const char *format_str[];
+
+  /**
+   * Identify an exact request for the configured virtual display.
+   * The stable alias is accepted before the VDD has a device ID; otherwise
+   * the request must match the currently enumerated VDD device exactly.
+   */
+  bool
+  is_exact_vdd_capture_request(std::string_view requested_display_name, std::string_view current_vdd_device_id);
+
+  /**
+   * A stale DXGI factory is only a soft signal for an existing exact VDD
+   * duplication. Real duplication errors still request reinitialization.
+   */
+  bool
+  should_reinitialize_for_factory_change(bool factory_is_current, bool exact_vdd_capture);
 
   // Add D3D11_CREATE_DEVICE_DEBUG here to enable the D3D11 debug runtime.
   // You should have a debugger like WinDbg attached to receive debug messages.
@@ -187,6 +203,10 @@ namespace platf::dxgi {
     int
     init(const ::video::config_t &config, const std::string &display_name);
 
+    /** Apply runtime-only capture settings when reusing a probe-owned display. */
+    virtual int
+    adopt_runtime_capture_config(const ::video::config_t &config, bool exact_vdd);
+
     capture_e
     capture(const push_captured_image_cb_t &push_captured_image_cb, const pull_free_image_cb_t &pull_free_image_cb, bool *cursor) override;
 
@@ -206,6 +226,9 @@ namespace platf::dxgi {
     DXGI_RATIONAL client_frame_rate_rational;  // Fractional framerate for NTSC support (e.g., 60000/1001 = 59.94fps)
     int adapter_index;
     int output_index;
+
+    bool exact_vdd_capture = false;
+    bool stale_factory_preservation_logged = false;
 
     DXGI_FORMAT capture_format;
 
@@ -465,6 +488,8 @@ namespace platf::dxgi {
   public:
     int
     init(const ::video::config_t &config, const std::string &display_name);
+    int
+    adopt_runtime_capture_config(const ::video::config_t &config, bool exact_vdd) override;
     capture_e
     snapshot(const pull_free_image_cb_t &pull_free_image_cb, std::shared_ptr<platf::img_t> &img_out, std::chrono::milliseconds timeout, bool cursor_visible) override;
     capture_e

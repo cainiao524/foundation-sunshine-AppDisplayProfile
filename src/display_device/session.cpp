@@ -18,6 +18,7 @@
   #include "src/platform/windows/vulkan_hdr_bridge_session.h"
 #endif
 #include "src/rtsp.h"
+#include "src/video.h"
 #include "to_string.h"
 #include "vdd_ioctl.h"
 #include "vdd_utils.h"
@@ -426,6 +427,10 @@ namespace display_device {
     bool is_reconfigure,
     const display_intent_t *resolved_intent) {
     std::lock_guard lock { mutex };
+
+    // A launch that never reached RTSP may have left a probe-owned DDA object.
+    // Release it before any topology, mode, HDR, or VDD lifecycle change.
+    video::discard_prepared_capture_display();
 
     // 恢复运行中的应用时可能换成另一个客户端。取消旧的延迟恢复任务，
     // 但在完成模式兼容性判断前保留当前 VDD；仅客户端身份变化不要求重建。
@@ -974,6 +979,9 @@ namespace display_device {
 
   void
   session_t::restore_state_impl(revert_reason_e reason) {
+    // Capture must not retain a probe-owned duplication while the display
+    // topology is being restored or its VDD monitor is being destroyed.
+    video::discard_prepared_capture_display();
 #ifdef _WIN32
     // Stop exposing the implicit layer before changing HDR state or removing
     // the VDD. The layer itself is pass-through, but registration must remain

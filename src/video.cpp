@@ -48,6 +48,7 @@ extern "C" {
   #include <libavutil/hwcontext_d3d11va.h>
 }
   #include "platform/windows/display_device/windows_utils.h"
+  #include "platform/windows/display.h"
 #endif
 
 using namespace std::literals;
@@ -57,6 +58,85 @@ namespace video {
     std::mutex hdr_pipeline_status_mutex;
     std::map<std::uint64_t, hdr_pipeline_status_t> hdr_pipeline_statuses;
     std::atomic<std::uint64_t> next_hdr_pipeline_status_id { 1 };
+
+#ifdef _WIN32
+    struct vdd_probe_display_cache_t {
+      std::mutex mutex;
+      std::shared_ptr<platf::display_t> display;
+      std::string display_name;
+    };
+
+    vdd_probe_display_cache_t vdd_probe_display_cache;
+
+    void
+    clear_vdd_probe_display() {
+      std::lock_guard lock { vdd_probe_display_cache.mutex };
+      vdd_probe_display_cache.display.reset();
+      vdd_probe_display_cache.display_name.clear();
+    }
+
+    void
+    retain_vdd_probe_display(std::shared_ptr<platf::display_t> display, const std::string &display_name) {
+      std::lock_guard lock { vdd_probe_display_cache.mutex };
+      vdd_probe_display_cache.display = std::move(display);
+      vdd_probe_display_cache.display_name = display_name;
+    }
+
+    bool
+    is_reusable_vdd_probe_display(const std::shared_ptr<platf::display_t> &display) {
+      return dynamic_cast<platf::dxgi::display_ddup_vram_t *>(display.get()) ||
+             dynamic_cast<platf::dxgi::display_ddup_ram_t *>(display.get());
+    }
+
+    bool
+    adopt_vdd_probe_display_config(
+      const std::shared_ptr<platf::display_t> &display,
+      const config_t &config) {
+      auto *dxgi_display = dynamic_cast<platf::dxgi::display_base_t *>(display.get());
+      return dxgi_display &&
+             is_reusable_vdd_probe_display(display) &&
+             dxgi_display->adopt_runtime_capture_config(config, true) == 0;
+    }
+
+    std::shared_ptr<platf::display_t>
+    take_vdd_probe_display(const std::string &display_name, const config_t &config) {
+      const auto capture_backend = config.capture_backend_override.empty() ? config::video.capture : config.capture_backend_override;
+      if (!should_handoff_vdd_probe_display(
+            probe_target_policy_e::vdd_compatible,
+            capture_backend,
+            is_running_as_system_user)) {
+        return nullptr;
+      }
+
+      std::shared_ptr<platf::display_t> display;
+      {
+        std::lock_guard lock { vdd_probe_display_cache.mutex };
+        if (vdd_probe_display_cache.display_name != display_name) {
+          return nullptr;
+        }
+        display = std::move(vdd_probe_display_cache.display);
+        vdd_probe_display_cache.display_name.clear();
+      }
+
+      if (!display) {
+        return nullptr;
+      }
+
+      if (!adopt_vdd_probe_display_config(display, config)) {
+        BOOST_LOG(warning) << "Failed to adopt the retained VDD probe display for runtime capture"sv;
+        return nullptr;
+      }
+      return display;
+    }
+#else
+    void
+    clear_vdd_probe_display() {}
+
+    std::shared_ptr<platf::display_t>
+    take_vdd_probe_display(const std::string &, const config_t &) {
+      return nullptr;
+    }
+#endif
 
     std::optional<std::string>
     capture_override_for_encoder_probe() {
@@ -1661,18 +1741,21 @@ namespace video {
     const std::vector<std::string> &available_display_names,
     int default_display_index,
     const std::string &requested_display_name) {
-    if (available_display_names.empty()) {
-      return std::nullopt;
-    }
-
     if (!requested_display_name.empty()) {
       const auto requested = std::ranges::find(available_display_names, requested_display_name);
       if (requested == available_display_names.end()) {
-        return std::nullopt;
+        // An explicit target remains authoritative even while DXGI's broad
+        // output enumeration is rebuilding. The caller can retry opening this
+        // exact output without substituting another display.
+        return display_target_selection_t { requested_display_name, -1 };
       }
 
       const auto index = static_cast<int>(std::distance(available_display_names.begin(), requested));
       return display_target_selection_t { *requested, index };
+    }
+
+    if (available_display_names.empty()) {
+      return std::nullopt;
     }
 
     const auto index = std::clamp(default_display_index, 0, static_cast<int>(available_display_names.size()) - 1);
@@ -1680,16 +1763,20 @@ namespace video {
   }
 
   void
-  reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
-    // We try this twice, in case we still get an error on reinitialization
-    for (int x = 0; x < 2; ++x) {
+  reset_display(
+    std::shared_ptr<platf::display_t> &disp,
+    const platf::mem_type_e &type,
+    const std::string &display_name,
+    const config_t &config,
+    int max_attempts = 2) {
+    for (int x = 0; x < max_attempts; ++x) {
       disp.reset();
       disp = platf::display(type, display_name, config);
       if (disp) {
         BOOST_LOG(debug) << "[reset_display] 成功重置显示器: " << display_name;
         break;
       }
-      BOOST_LOG(debug) << "[reset_display] 显示器创建失败 (尝试 " << (x + 1) << "/2): " << display_name;
+      BOOST_LOG(debug) << "[reset_display] 显示器创建失败 (尝试 " << (x + 1) << '/' << max_attempts << "): " << display_name;
       // The capture code depends on us to sleep between failures
       std::this_thread::sleep_for(200ms);
     }
@@ -1760,9 +1847,20 @@ namespace video {
     resolve_requested_display_name(const std::string &requested_display_name) {
       auto resolved_display_name = display_device::get_display_name(requested_display_name);
       if (resolved_display_name.empty()) {
-        // Non-Windows backends and callers that already provide a backend output
-        // name use the value directly. A temporarily unresolved Windows device ID
-        // remains unmatched and will be resolved again on the next retry.
+#ifdef _WIN32
+        const bool stable_windows_device_id = requested_display_name == VDD_NAME ||
+                                              (requested_display_name.size() >= 2 &&
+                                               requested_display_name.front() == '{' &&
+                                               requested_display_name.back() == '}');
+        if (stable_windows_device_id) {
+          // A Windows device ID may temporarily have no GDI output while the
+          // hybrid-GPU path is being rebuilt. Do not pass the ID to DXGI and do
+          // not replace it with another output; resolve it again on the retry.
+          return {};
+        }
+#endif
+        // Non-Windows backends and callers that already provide a backend
+        // output name use the value directly.
         resolved_display_name = requested_display_name;
       }
       return resolved_display_name;
@@ -1783,16 +1881,40 @@ namespace video {
       bool waiting_logged = false;
 
       while (keep_waiting()) {
-        refresh_displays(dev_type, display_names, display_index);
+        std::string resolved_display_name;
+        if (explicit_target) {
+          // Do not run display_names() for an exact APP/session target. On
+          // hybrid-GPU systems that broad enumeration performs Desktop
+          // Duplication probes on every adapter and can consume the readiness
+          // window or perturb a newly-created VDD output. platf::display()
+          // validates the exact resolved output itself.
+          resolved_display_name = resolve_requested_display_name(config.display_name);
+        }
+        else {
+          refresh_displays(dev_type, display_names, display_index);
+        }
 
-        const auto resolved_display_name = explicit_target ?
-                                             resolve_requested_display_name(config.display_name) :
-                                             std::string {};
-        const auto selection = select_display_target(display_names, display_index, resolved_display_name);
+        const auto selection = explicit_target && resolved_display_name.empty() ?
+                                 std::optional<display_target_selection_t> {} :
+                                 select_display_target(display_names, display_index, resolved_display_name);
         if (selection) {
-          display_index = selection->index;
+          if (selection->index >= 0) {
+            display_index = selection->index;
+          }
           target_display_name = selection->display_name;
-          reset_display(disp, dev_type, target_display_name, config);
+          // The exact-target loop already retries until its deadline, while
+          // the platform initializer refreshes DXGI several times per call.
+          // Avoid nesting the generic two-pass retry inside that bounded loop.
+          if (explicit_target) {
+            disp = take_vdd_probe_display(target_display_name, config);
+            if (disp) {
+              BOOST_LOG(info) << "Reusing the exact VDD capture display retained by encoder probing: "sv
+                              << target_display_name;
+            }
+          }
+          if (!disp) {
+            reset_display(disp, dev_type, target_display_name, config, explicit_target ? 1 : 2);
+          }
           if (disp) {
             if (explicit_target) {
               BOOST_LOG(info) << "Using client-specified display: " << target_display_name;
@@ -1827,6 +1949,22 @@ namespace video {
       return false;
     }
   }  // namespace
+
+  bool
+  should_handoff_vdd_probe_display(
+    probe_target_policy_e policy,
+    std::string_view capture_backend,
+    bool running_as_system_user) {
+    return policy == probe_target_policy_e::vdd_compatible &&
+           (capture_backend.empty() ||
+            capture_backend == "ddx" ||
+            (running_as_system_user && capture_backend == "wgc"));
+  }
+
+  void
+  discard_prepared_capture_display() {
+    clear_vdd_probe_display();
+  }
 
   void
   captureThread(
@@ -2097,10 +2235,12 @@ namespace video {
             // only support a single display session per device/application.
             disp.reset();
 
-            // Process any pending display switch with the new list of displays
-            refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
             bool user_switched = false;
             if (switch_display_event->peek()) {
+              // A manual switch is index-based and therefore requires a fresh
+              // full list. Exact APP/session targets skip this enumeration in
+              // acquire_capture_display().
+              refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
               display_p = std::clamp(*switch_display_event->pop(), 0, (int) display_names.size() - 1);
               user_switched = true;
             }
@@ -3549,11 +3689,11 @@ namespace video {
     }
 
     while (encode_session_ctx_queue.running()) {
-      refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
-
-      // Process any pending display switch with the new list of displays
       bool user_switched = false;
       if (switch_display_event->peek()) {
+        // A manual switch is index-based and therefore requires a fresh full
+        // list. Exact APP/session targets are opened directly below.
+        refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
         display_p = std::clamp(*switch_display_event->pop(), 0, (int) display_names.size() - 1);
         user_switched = true;
       }
@@ -4087,8 +4227,12 @@ namespace video {
     encoder_t &encoder,
     bool expect_failure,
     const std::optional<std::string> &probe_capture_override,
-    const std::string &probe_display_name) {
+    const std::string &probe_display_name,
+    std::shared_ptr<platf::display_t> *retained_display) {
     std::shared_ptr<platf::display_t> disp;
+    if (retained_display) {
+      retained_display->reset();
+    }
     const auto configured_capture_backend = config::video.capture;
 
     BOOST_LOG(info) << "Trying encoder ["sv << encoder.name << ']';
@@ -4135,6 +4279,13 @@ namespace video {
     if (!disp) {
       return false;
     }
+#ifdef _WIN32
+    if (retained_display && is_reusable_vdd_probe_display(disp) &&
+        !adopt_vdd_probe_display_config(disp, config_autoselect)) {
+      BOOST_LOG(warning) << "Failed to mark the exact VDD probe display for duplication preservation"sv;
+      return false;
+    }
+#endif
     if (!disp->is_codec_supported(encoder.h264.name, config_autoselect)) {
       fg.disable();
       BOOST_LOG(info) << "Encoder ["sv << encoder.name << "] is not supported on this GPU"sv;
@@ -4257,8 +4408,30 @@ namespace video {
           generic_hdr_config.capture_backend_override = *probe_capture_override;
         }
 
-        // Reset the display since we're switching from SDR to HDR
-        reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, generic_hdr_config);
+        // Switching the probe from SDR to HDR only changes runtime capture
+        // configuration. Keep an already-working exact VDD duplication alive;
+        // recreating it here can lose the same hybrid-GPU output that was just
+        // captured successfully.
+        bool reused_vdd_probe_display = false;
+#ifdef _WIN32
+        if (retained_display && is_reusable_vdd_probe_display(disp)) {
+          reused_vdd_probe_display = adopt_vdd_probe_display_config(disp, generic_hdr_config);
+          if (reused_vdd_probe_display) {
+            BOOST_LOG(info) << "Reusing the exact VDD capture display for HDR encoder probing: "sv
+                            << probe_display_name;
+          }
+        }
+#endif
+        if (!reused_vdd_probe_display) {
+          reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, generic_hdr_config);
+#ifdef _WIN32
+          if (retained_display && is_reusable_vdd_probe_display(disp) &&
+              !adopt_vdd_probe_display_config(disp, generic_hdr_config)) {
+            BOOST_LOG(warning) << "Failed to mark the recreated exact VDD HDR probe display for duplication preservation"sv;
+            return false;
+          }
+#endif
+        }
         if (!disp) {
           return false;
         }
@@ -4308,11 +4481,20 @@ namespace video {
     }
 
     fg.disable();
+    if (retained_display
+#ifdef _WIN32
+        && is_reusable_vdd_probe_display(disp)
+#endif
+    ) {
+      *retained_display = std::move(disp);
+    }
     return true;
   }
 
   int
   probe_encoders(std::optional<probe_target_t> target) {
+    clear_vdd_probe_display();
+
     last_encoder_probe_result = {
       probe_error_e::none,
       "Encoder probe succeeded.",
@@ -4348,7 +4530,8 @@ namespace video {
       return -1;
     }
     auto probe_display_name = configured_display_name;
-    if (probe_capture_override) {
+    const bool target_is_vdd = target && target->policy == probe_target_policy_e::vdd_compatible;
+    if (probe_capture_override && !target_is_vdd) {
       // The Windows implementation enumerates all DXGI capture-ready outputs
       // regardless of memory type, so one pass serves every encoder candidate.
       const auto capture_ready_displays = encoder_list.empty() ?
@@ -4383,6 +4566,21 @@ namespace video {
                            << "]; encoder probing will use backend display auto-selection"sv;
       }
     }
+    else if (probe_capture_override && target_is_vdd) {
+      if (configured_display_name.empty()) {
+        last_encoder_probe_result = {
+          probe_error_e::no_active_display,
+          "The requested VDD is not connected or active for encoder probing.",
+          "Wait for the virtual display to become active, then try again."
+        };
+        BOOST_LOG(error) << "Requested VDD output ["sv << configured_output_name
+                         << "] could not be resolved for temporary capture backend ["sv
+                         << *probe_capture_override << "]"sv;
+        return -1;
+      }
+      BOOST_LOG(debug) << "Skipping broad display enumeration for the exact VDD encoder probe target ["sv
+                       << configured_display_name << "]"sv;
+    }
     else if (target && target->policy == probe_target_policy_e::vdd_compatible && configured_display_name.empty()) {
       last_encoder_probe_result = {
         probe_error_e::no_active_display,
@@ -4396,6 +4594,13 @@ namespace video {
 
     // Restart encoder selection
     auto previous_encoder = chosen_encoder;
+    std::shared_ptr<platf::display_t> vdd_probe_display;
+    auto *retained_display = target_is_vdd ? &vdd_probe_display : nullptr;
+    const bool handoff_probe_display_to_runtime = target &&
+                                                  should_handoff_vdd_probe_display(
+                                                    target->policy,
+                                                    config::video.capture,
+                                                    is_running_as_system_user);
     chosen_encoder = nullptr;
     active_encoder_for_status.store(nullptr, std::memory_order_release);
     active_hevc_mode = config::video.hevc_mode;
@@ -4434,7 +4639,8 @@ namespace video {
                 *encoder,
                 previous_encoder && previous_encoder != encoder,
                 probe_capture_override,
-                probe_display_name)) {
+                probe_display_name,
+                retained_display)) {
             pos = encoder_list.erase(pos);
             break;
           }
@@ -4466,7 +4672,8 @@ namespace video {
               *encoder,
               previous_encoder && previous_encoder != encoder,
               probe_capture_override,
-              probe_display_name)) {
+              probe_display_name,
+              retained_display)) {
           pos = encoder_list.erase(pos);
           continue;
         }
@@ -4507,7 +4714,8 @@ namespace video {
               *encoder,
               previous_encoder && previous_encoder != encoder,
               probe_capture_override,
-              probe_display_name)) {
+              probe_display_name,
+              retained_display)) {
           pos = encoder_list.erase(pos);
           continue;
         }
@@ -4552,6 +4760,14 @@ namespace video {
       }
       return -1;
     }
+
+#ifdef _WIN32
+    if (handoff_probe_display_to_runtime && vdd_probe_display) {
+      retain_vdd_probe_display(std::move(vdd_probe_display), probe_display_name);
+      BOOST_LOG(info) << "Retaining the exact VDD capture display from encoder probing for stream startup: "sv
+                      << probe_display_name;
+    }
+#endif
 
     BOOST_LOG(info) << "Ignore any errors, Encoder testing completed (忽略任何错误，编码器测试完成)";
 

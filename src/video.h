@@ -148,8 +148,9 @@ namespace video {
   };
 
   /**
-   * @brief A capture display selected from the currently enumerated outputs.
-   * @details An explicit request is never substituted with the default output.
+   * @brief A capture display selected from the current request and output list.
+   * @details An explicit request remains exact even while broad output
+   * enumeration is transiently missing it; its index is then -1.
    */
   struct display_target_selection_t {
     std::string display_name;
@@ -161,7 +162,8 @@ namespace video {
    * @param available_display_names Capture-ready output names from the backend.
    * @param default_display_index Current default output index.
    * @param requested_display_name Resolved explicit output name, or empty for default selection.
-   * @return The selected output, or no value while an explicit output is unavailable.
+   * @return The exact requested output, the selected default output, or no
+   * value when no default output is available.
    */
   std::optional<display_target_selection_t>
   select_display_target(
@@ -561,6 +563,17 @@ namespace video {
     vdd_compatible
   };
 
+  /**
+   * @brief Whether an encoder-probe display may be handed directly to runtime capture.
+   * @details Only an exact VDD target using the same DDX runtime path is compatible.
+   *          Service-mode WGC requests are also DDX at runtime and are compatible.
+   */
+  bool
+  should_handoff_vdd_probe_display(
+    probe_target_policy_e policy,
+    std::string_view capture_backend,
+    bool running_as_system_user = false);
+
   struct probe_target_t {
     std::string output_name; /**< Device selector in the same domain as config::video.output_name. */
     probe_target_policy_e policy { probe_target_policy_e::backend_autoselect };
@@ -598,7 +611,8 @@ namespace video {
     encoder_t &encoder,
     bool expect_failure,
     const std::optional<std::string> &probe_capture_override,
-    const std::string &probe_display_name);
+    const std::string &probe_display_name,
+    std::shared_ptr<platf::display_t> *retained_display = nullptr);
 
   /**
    * @brief Probe encoders and select the preferred encoder.
@@ -610,4 +624,8 @@ namespace video {
    */
   int
   probe_encoders(std::optional<probe_target_t> target = std::nullopt);
+
+  /** Release any probe display that has not yet been claimed by runtime capture. */
+  void
+  discard_prepared_capture_display();
 }  // namespace video

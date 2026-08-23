@@ -11,6 +11,7 @@
 
   #include <src/platform/windows/display_cursor.h>
   #include <src/cursor_channel.h>
+  #include <src/globals.h>
 
   #include "../../../tests_common.h"
 
@@ -36,6 +37,23 @@ namespace {
     std::memcpy(image.begin() + index * sizeof(pixel), &pixel, sizeof(pixel));
   }
 }  // namespace
+
+TEST(WindowsDisplayCapturePolicy, IdentifiesOnlyExactVddRequests) {
+  constexpr std::string_view current_vdd_id = "{13190147-3b2e-5665-b52a-ab822d5ec075}";
+
+  EXPECT_TRUE(platf::dxgi::is_exact_vdd_capture_request(VDD_NAME, {}));
+  EXPECT_TRUE(platf::dxgi::is_exact_vdd_capture_request(current_vdd_id, current_vdd_id));
+  EXPECT_FALSE(platf::dxgi::is_exact_vdd_capture_request("{physical-display-id}", current_vdd_id));
+  EXPECT_FALSE(platf::dxgi::is_exact_vdd_capture_request(current_vdd_id, {}));
+  EXPECT_FALSE(platf::dxgi::is_exact_vdd_capture_request({}, current_vdd_id));
+}
+
+TEST(WindowsDisplayCapturePolicy, PreservesOnlyExactVddWhenFactoryBecomesStale) {
+  EXPECT_FALSE(platf::dxgi::should_reinitialize_for_factory_change(true, false));
+  EXPECT_FALSE(platf::dxgi::should_reinitialize_for_factory_change(true, true));
+  EXPECT_TRUE(platf::dxgi::should_reinitialize_for_factory_change(false, false));
+  EXPECT_FALSE(platf::dxgi::should_reinitialize_for_factory_change(false, true));
+}
 
 TEST(WindowsCursorImage, IgnoresMonochromeMaskRowPadding) {
   DXGI_OUTDUPL_POINTER_SHAPE_INFO shape_info {};

@@ -27,6 +27,7 @@ if ($aliasTarget -notcontains $sourcePath) {
 
 $msysSource = $BuildAlias.Replace('\', '/').Replace('C:', '/c')
 $buildPath = Join-Path $BuildAlias $BuildDirectory
+$sourceBuildPath = Join-Path $sourcePath $BuildDirectory
 $stagingPath = Join-Path $buildPath 'inno_staging'
 $installerOutputPath = Join-Path $buildPath 'inno_artifacts'
 $portableOutputPath = Join-Path $buildPath 'portable_artifacts'
@@ -117,10 +118,10 @@ if ($null -eq $localGui) {
 
 New-Item -ItemType Directory -Force -Path $buildPath | Out-Null
 & (Join-Path $PSScriptRoot 'test-prepare-ds5-sidecar-manifest.ps1')
-if ($LASTEXITCODE -ne 0) { throw 'DualSense manifest tests failed.' }
-$preparedManifest = Join-Path $buildPath 'ds5-sidecar-package.json'
+if (-not $?) { throw 'DualSense manifest tests failed.' }
+$preparedManifest = Join-Path $sourceBuildPath 'ds5-sidecar-package.json'
 & (Join-Path $PSScriptRoot 'prepare-ds5-sidecar-manifest.ps1') -OutputPath $preparedManifest
-if ($LASTEXITCODE -ne 0) { throw 'DualSense manifest preparation failed.' }
+if (-not $?) { throw 'DualSense manifest preparation failed.' }
 
 & $msysBash -lc "set -euo pipefail; export PATH=/ucrt64/bin:/usr/bin; cd '$msysSource'; cmake $driverPinResetArguments -B '$BuildDirectory' -G Ninja -S . -DBUILD_DOCS=OFF -DBUILD_TESTS=ON -DBUILD_TRAY_TESTS=ON -DBUILD_WEB_UI=OFF -DSUNSHINE_ASSETS_DIR=assets -DFETCH_GUI=OFF -DSUNSHINE_PREFER_LOCAL_GUI=ON -DFETCH_DRIVER_DEPS=ON -DDRIVER_DEPS_REQUIRED=ON -DSUNSHINE_PUBLISHER_NAME='$PublisherName' -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile' -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/cainiao524/foundation-sunshine-AppDisplayProfile/issues'; ninja -C '$BuildDirectory' -j2; ctest --test-dir '$BuildDirectory' --output-on-failure; cmake --install '$BuildDirectory' --prefix '$BuildDirectory/inno_staging'"
 if ($LASTEXITCODE -ne 0) { throw 'Native build or staging failed.' }
@@ -182,7 +183,7 @@ Copy-Item -LiteralPath (Join-Path $installerOutputPath 'Sunshine.exe') -Destinat
 Copy-Item -LiteralPath (Join-Path $portableOutputPath 'Sunshine.zip') -Destination $portableArtifact
 
 & (Join-Path $PSScriptRoot 'generate-checksums.ps1') -Path $artifacts -Output 'SHA256SUMS.txt'
-if ($LASTEXITCODE -ne 0) { throw 'Checksum generation failed.' }
+if (-not $?) { throw 'Checksum generation failed.' }
 
 $expectedArtifacts = @(
   'Sunshine-AppDisplayProfile-WindowsInstaller.exe',

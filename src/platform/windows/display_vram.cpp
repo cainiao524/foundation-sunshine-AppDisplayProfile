@@ -3528,6 +3528,14 @@ namespace platf::dxgi {
   }
 
   int
+  display_ddup_vram_t::adopt_runtime_capture_config(const ::video::config_t &config, bool exact_vdd) {
+    if (display_base_t::adopt_runtime_capture_config(config, exact_vdd) != 0) {
+      return -1;
+    }
+    return init_cursor_pipeline(config);
+  }
+
+  int
   display_amd_vram_t::init(const ::video::config_t &config, const std::string &display_name) {
     if (display_base_t::init(config, display_name) || dup.init(this, config, output_index)) {
       BOOST_LOG(error) << "AMD VRAM() failed";
