@@ -152,6 +152,31 @@ TEST(VideoBitrate, CapsInitialEncoderBitrateUsingTotalBitrateLimit) {
   EXPECT_EQ(video::cap_initial_encoder_bitrate(40000, 50000, 10), 40000);
 }
 
+TEST(VideoDisplayTarget, ExplicitTargetNeverFallsBackToAnotherDisplay) {
+  const std::vector<std::string> displays { R"(\\.\DISPLAY1)", R"(\\.\DISPLAY5)", R"(\\.\DISPLAY9)" };
+
+  EXPECT_FALSE(video::select_display_target(displays, 0, R"(\\.\DISPLAY10)").has_value());
+  EXPECT_EQ(displays, (std::vector<std::string> { R"(\\.\DISPLAY1)", R"(\\.\DISPLAY5)", R"(\\.\DISPLAY9)" }));
+}
+
+TEST(VideoDisplayTarget, SelectsReenumeratedVddNameWithoutChangingPhysicalDisplays) {
+  const std::vector<std::string> displays { R"(\\.\DISPLAY1)", R"(\\.\DISPLAY5)", R"(\\.\DISPLAY10)" };
+
+  const auto selected = video::select_display_target(displays, 0, R"(\\.\DISPLAY10)");
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(selected->display_name, R"(\\.\DISPLAY10)");
+  EXPECT_EQ(selected->index, 2);
+}
+
+TEST(VideoDisplayTarget, EmptyRequestKeepsDefaultSelectionBehavior) {
+  const std::vector<std::string> displays { "panel", "external", "vdd" };
+
+  const auto selected = video::select_display_target(displays, 1, {});
+  ASSERT_TRUE(selected.has_value());
+  EXPECT_EQ(selected->display_name, "external");
+  EXPECT_EQ(selected->index, 1);
+}
+
 TEST(HdrPipelineStatus, RegistersUpdatesAndRemovesPipelineState) {
   video::hdr_pipeline_status_t status {
     .hdr_mode = "hlg",

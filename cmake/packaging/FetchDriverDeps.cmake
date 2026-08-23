@@ -46,7 +46,7 @@ set(VDD_WIN10_DRIVER_VERSION "v0.15.8" CACHE STRING "Win10-pinned ZakoVDD driver
 set(VDD_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Latest ZakoVDD release asset name")
 set(VDD_WIN10_DRIVER_ASSET_NAME "zakovdd.zip" CACHE STRING "Win10-pinned ZakoVDD release asset name")
 set(NEFCON_VERSION "v1.18.74" CACHE STRING "nefcon version tag")
-set(NEFCON_SHA256 "625abcdea9e84577d094ab65a8542c9977eb50f2371d216961af01cf4901f172"
+set(NEFCON_SHA256 "812bae7ed7dfb7d6d2284bc7de2f8ccebc92ed2a0b1ae893c53b337096e50c1a"
     CACHE STRING "SHA256 of the pinned nefcon release archive")
 set(VIGEMBUS_VERSION "v1.22.0" CACHE STRING "ViGEmBus release tag")
 set(VIGEMBUS_ASSET_NAME "ViGEmBus_1.22.0_x64_x86_arm64.exe"

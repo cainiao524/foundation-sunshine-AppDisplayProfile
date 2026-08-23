@@ -147,6 +147,28 @@ namespace video {
     }
   };
 
+  /**
+   * @brief A capture display selected from the currently enumerated outputs.
+   * @details An explicit request is never substituted with the default output.
+   */
+  struct display_target_selection_t {
+    std::string display_name;
+    int index = -1;
+  };
+
+  /**
+   * @brief Select a capture output without silently replacing an explicit target.
+   * @param available_display_names Capture-ready output names from the backend.
+   * @param default_display_index Current default output index.
+   * @param requested_display_name Resolved explicit output name, or empty for default selection.
+   * @return The selected output, or no value while an explicit output is unavailable.
+   */
+  std::optional<display_target_selection_t>
+  select_display_target(
+    const std::vector<std::string> &available_display_names,
+    int default_display_index,
+    const std::string &requested_display_name);
+
   // Convert a total video transport budget (including FEC) to encoder bitrate.
   int
   encoder_bitrate_from_total_bitrate(int total_bitrate_kbps, int fec_percentage);

@@ -306,7 +306,10 @@ namespace display_device {
      * @brief 执行依赖可访问交互式 Windows 会话的 VDD 显示操作。
      */
     static vdd_stage_result_e
-    apply_vdd_display_stage(const parsed_config_t &config, const boost::optional<device_info_map_t> &pre_vdd_devices);
+    apply_vdd_display_stage(
+      const parsed_config_t &config,
+      const boost::optional<active_topology_t> &pre_vdd_topology,
+      const boost::optional<device_info_map_t> &pre_vdd_devices);
 
     settings_t settings; /**< A class for managing display device settings. */
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
@@ -316,7 +319,7 @@ namespace display_device {
     boost::optional<parsed_config_t::device_prep_e> current_device_prep; /**< Current device preparation mode, respecting client overrides. */
     boost::optional<parsed_config_t::vdd_prep_e> current_vdd_prep; /**< Current VDD preparation mode for VDD mode sessions. */
     boost::optional<bool> current_use_vdd; /**< Whether current session is using VDD mode. */
-    pending_vdd_context_t pending_vdd_; /**< 在显示配置成功或清理前保留的 VDD 创建基线。 */
+    pending_vdd_context_t pending_vdd_; /**< 跨断开重连保留整个逻辑 VDD 会话的首次创建基线。 */
     bool pending_restore_ = false; /**< Flag indicating if there is a pending restore settings operation waiting for unlock. */
     boost::atomic<int> polling_retry_count_ {0}; /**< Retry counter for polling restore mechanism. */
 

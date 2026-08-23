@@ -99,6 +99,64 @@ TEST(VddRestoreSafety, RemapsOnlyTheMissingDualGpuAliasAndPreservesMultiDisplayT
   EXPECT_EQ(topology, (active_topology_t { { "panel-new" }, { "external" } }));
 }
 
+TEST(VddOverlayTopology, AddsSecondaryWithoutChangingThreePhysicalDisplays) {
+  using namespace display_device;
+
+  const active_topology_t physical_topology { { "panel" }, { "left" }, { "right" } };
+  EXPECT_EQ(
+    vdd_utils::build_vdd_overlay_topology(
+      "vdd",
+      parsed_config_t::vdd_prep_e::vdd_as_secondary,
+      physical_topology),
+    (active_topology_t { { "panel" }, { "left" }, { "right" }, { "vdd" } }));
+  EXPECT_EQ(physical_topology, (active_topology_t { { "panel" }, { "left" }, { "right" } }));
+}
+
+TEST(VddOverlayTopology, PreservesMirroredPhysicalGroup) {
+  using namespace display_device;
+
+  const active_topology_t physical_topology { { "panel", "mirror" }, { "external" } };
+  EXPECT_EQ(
+    vdd_utils::build_vdd_overlay_topology(
+      "vdd",
+      parsed_config_t::vdd_prep_e::vdd_as_secondary,
+      physical_topology),
+    (active_topology_t { { "panel", "mirror" }, { "external" }, { "vdd" } }));
+}
+
+TEST(VddOverlayTopology, AddsPrimaryWithoutChangingPhysicalGroups) {
+  using namespace display_device;
+
+  EXPECT_EQ(
+    vdd_utils::build_vdd_overlay_topology(
+      "vdd",
+      parsed_config_t::vdd_prep_e::vdd_as_primary,
+      { { "panel", "mirror" }, { "external" } }),
+    (active_topology_t { { "vdd" }, { "panel", "mirror" }, { "external" } }));
+}
+
+TEST(VddOverlayTopology, ReconnectDoesNotDuplicateExistingVddGroup) {
+  using namespace display_device;
+
+  EXPECT_EQ(
+    vdd_utils::build_vdd_overlay_topology(
+      "vdd",
+      parsed_config_t::vdd_prep_e::vdd_as_secondary,
+      { { "panel" }, { "external" }, { "vdd" } }),
+    (active_topology_t { { "panel" }, { "external" }, { "vdd" } }));
+}
+
+TEST(VddOverlayTopology, OnlyDisplayKeepsOnlyVdd) {
+  using namespace display_device;
+
+  EXPECT_EQ(
+    vdd_utils::build_vdd_overlay_topology(
+      "vdd",
+      parsed_config_t::vdd_prep_e::display_off,
+      { { "panel" }, { "external" } }),
+    (active_topology_t { { "vdd" } }));
+}
+
 TEST(VddRestoreSafety, RejectsAmbiguousPhysicalIdentityInsteadOfGuessing) {
   using namespace display_device;
 

@@ -14,6 +14,7 @@
 #include <map>
 #include <mutex>
 #include <optional>
+#include <string_view>
 #include <thread>
 
 #include <boost/pointer_cast.hpp>
@@ -1655,6 +1656,29 @@ namespace video {
     return std::isfinite(nits) && nits >= 50.0f && nits <= 1000.0f;
   }
 
+  std::optional<display_target_selection_t>
+  select_display_target(
+    const std::vector<std::string> &available_display_names,
+    int default_display_index,
+    const std::string &requested_display_name) {
+    if (available_display_names.empty()) {
+      return std::nullopt;
+    }
+
+    if (!requested_display_name.empty()) {
+      const auto requested = std::ranges::find(available_display_names, requested_display_name);
+      if (requested == available_display_names.end()) {
+        return std::nullopt;
+      }
+
+      const auto index = static_cast<int>(std::distance(available_display_names.begin(), requested));
+      return display_target_selection_t { *requested, index };
+    }
+
+    const auto index = std::clamp(default_display_index, 0, static_cast<int>(available_display_names.size()) - 1);
+    return display_target_selection_t { available_display_names[index], index };
+  }
+
   void
   reset_display(std::shared_ptr<platf::display_t> &disp, const platf::mem_type_e &type, const std::string &display_name, const config_t &config) {
     // We try this twice, in case we still get an error on reinitialization
@@ -1728,6 +1752,82 @@ namespace video {
     }
   }
 
+  namespace {
+    constexpr auto explicit_display_ready_timeout = 8s;
+    constexpr auto explicit_display_retry_interval = 100ms;
+
+    std::string
+    resolve_requested_display_name(const std::string &requested_display_name) {
+      auto resolved_display_name = display_device::get_display_name(requested_display_name);
+      if (resolved_display_name.empty()) {
+        // Non-Windows backends and callers that already provide a backend output
+        // name use the value directly. A temporarily unresolved Windows device ID
+        // remains unmatched and will be resolved again on the next retry.
+        resolved_display_name = requested_display_name;
+      }
+      return resolved_display_name;
+    }
+
+    bool
+    acquire_capture_display(
+      std::shared_ptr<platf::display_t> &disp,
+      platf::mem_type_e dev_type,
+      std::vector<std::string> &display_names,
+      int &display_index,
+      const config_t &config,
+      std::string &target_display_name,
+      const std::function<bool()> &keep_waiting,
+      std::string_view context) {
+      const bool explicit_target = !config.display_name.empty();
+      const auto deadline = std::chrono::steady_clock::now() + explicit_display_ready_timeout;
+      bool waiting_logged = false;
+
+      while (keep_waiting()) {
+        refresh_displays(dev_type, display_names, display_index);
+
+        const auto resolved_display_name = explicit_target ?
+                                             resolve_requested_display_name(config.display_name) :
+                                             std::string {};
+        const auto selection = select_display_target(display_names, display_index, resolved_display_name);
+        if (selection) {
+          display_index = selection->index;
+          target_display_name = selection->display_name;
+          reset_display(disp, dev_type, target_display_name, config);
+          if (disp) {
+            if (explicit_target) {
+              BOOST_LOG(info) << "Using client-specified display: " << target_display_name;
+            }
+            return true;
+          }
+        }
+
+        if (!explicit_target) {
+          return false;
+        }
+
+        if (!waiting_logged) {
+          BOOST_LOG(info) << "Waiting for client-specified display [" << config.display_name
+                          << "] to become capture-ready [context=" << context << ']';
+          waiting_logged = true;
+        }
+
+        const auto now = std::chrono::steady_clock::now();
+        if (now >= deadline) {
+          BOOST_LOG(error) << "Client-specified display [" << config.display_name
+                           << "] did not become capture-ready; refusing to fall back to another display"
+                           << " [context=" << context << ']';
+          return false;
+        }
+
+        std::this_thread::sleep_for(std::min(
+          explicit_display_retry_interval,
+          std::chrono::duration_cast<std::chrono::milliseconds>(deadline - now)));
+      }
+
+      return false;
+    }
+  }  // namespace
+
   void
   captureThread(
     std::shared_ptr<safe::queue_t<capture_ctx_t>> capture_ctx_queue,
@@ -1758,46 +1858,20 @@ namespace video {
     }
     capture_ctxs.emplace_back(std::move(*initial_capture_ctx));
 
-    // Get all the monitor names now, rather than at boot, to
-    // get the most up-to-date list available monitors
     std::vector<std::string> display_names;
     int display_p = -1;
-    refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
-
-    // Use client-specified display_name if provided, otherwise use the selected display
     std::string target_display_name;
     const auto &config = capture_ctxs.front().config;
-    if (!config.display_name.empty()) {
-      // config.display_name may be a device ID (e.g., {xxx-xxx-xxx}) rather than display name (e.g., \\.\DISPLAY1)
-      // Try to convert device ID to display name first
-      std::string resolved_display_name = display_device::get_display_name(config.display_name);
-      if (resolved_display_name.empty()) {
-        // If conversion failed, use the original value (might already be a display name)
-        resolved_display_name = config.display_name;
-      }
-
-      // Try to find the display in the list
-      bool found = false;
-      for (int x = 0; x < display_names.size(); ++x) {
-        if (display_names[x] == resolved_display_name) {
-          display_p = x;
-          target_display_name = resolved_display_name;
-          found = true;
-          BOOST_LOG(info) << "Using client-specified display: " << target_display_name;
-          break;
-        }
-      }
-      if (!found) {
-        BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
-        target_display_name = display_names[display_p];
-      }
-    }
-    else {
-      target_display_name = display_names[display_p];
-    }
-
-    auto disp = platf::display(encoder.platform_formats->dev_type, target_display_name, config);
-    if (!disp) {
+    std::shared_ptr<platf::display_t> disp;
+    if (!acquire_capture_display(
+          disp,
+          encoder.platform_formats->dev_type,
+          display_names,
+          display_p,
+          config,
+          target_display_name,
+          [&capture_ctx_queue]() { return capture_ctx_queue->running(); },
+          "initial")) {
       return;
     }
     active_display_event->raise(target_display_name);
@@ -2023,49 +2097,37 @@ namespace video {
             // only support a single display session per device/application.
             disp.reset();
 
-            // Refresh display names since a display removal might have caused the reinitialization
-            refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
-
             // Process any pending display switch with the new list of displays
+            refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
             bool user_switched = false;
             if (switch_display_event->peek()) {
               display_p = std::clamp(*switch_display_event->pop(), 0, (int) display_names.size() - 1);
               user_switched = true;
             }
 
-            // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
             auto &config = capture_ctxs.front().config;
-            target_display_name = display_names[display_p];
-            if (!user_switched && !config.display_name.empty()) {
-              // config.display_name may be a device ID - convert to display name
-              std::string resolved_display_name = display_device::get_display_name(config.display_name);
-              if (resolved_display_name.empty()) {
-                resolved_display_name = config.display_name;
-              }
-
-              // Try to find the display in the list
-              bool found = false;
-              for (int x = 0; x < display_names.size(); ++x) {
-                if (display_names[x] == resolved_display_name) {
-                  display_p = x;
-                  target_display_name = resolved_display_name;
-                  found = true;
-                  break;
-                }
-              }
-              if (!found) {
-                BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
-              }
-            }
-
             if (user_switched) {
+              target_display_name = display_names[display_p];
               for (auto &capture_ctx : capture_ctxs) {
                 capture_ctx.config.display_name = target_display_name;
               }
+              reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
+            }
+            else if (!acquire_capture_display(
+                       disp,
+                       encoder.platform_formats->dev_type,
+                       display_names,
+                       display_p,
+                       config,
+                       target_display_name,
+                       [&capture_ctx_queue]() { return capture_ctx_queue->running(); },
+                       "reinitialize")) {
+              if (!capture_ctx_queue->running()) {
+                return;
+              }
+              continue;
             }
 
-            // reset_display() will sleep between retries
-            reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
             if (disp) {
               active_display_event->raise(target_display_name);
               break;
@@ -3487,7 +3549,6 @@ namespace video {
     }
 
     while (encode_session_ctx_queue.running()) {
-      // Refresh display names since a display removal might have caused the reinitialization
       refresh_displays(encoder.platform_formats->dev_type, display_names, display_p);
 
       // Process any pending display switch with the new list of displays
@@ -3497,39 +3558,31 @@ namespace video {
         user_switched = true;
       }
 
-      // Use client-specified display_name if provided (only for auto-reinit, not manual switch)
       auto &config = synced_session_ctxs.front()->config;
-      std::string target_display_name = display_names[display_p];
-      if (!user_switched && !config.display_name.empty()) {
-        // config.display_name may be a device ID - convert to display name
-        std::string resolved_display_name = display_device::get_display_name(config.display_name);
-        if (resolved_display_name.empty()) {
-          resolved_display_name = config.display_name;
-        }
-
-        // Try to find the display in the list
-        bool found = false;
-        for (int x = 0; x < display_names.size(); ++x) {
-          if (display_names[x] == resolved_display_name) {
-            display_p = x;
-            target_display_name = resolved_display_name;
-            found = true;
-            break;
-          }
-        }
-        if (!found) {
-          BOOST_LOG(warning) << "Client-specified display [" << config.display_name << "] (resolved: " << resolved_display_name << ") not found, using default display";
-        }
-      }
+      std::string target_display_name;
 
       if (user_switched) {
+        target_display_name = display_names[display_p];
         for (auto &ctx : synced_session_ctxs) {
           ctx->config.display_name = target_display_name;
         }
+        reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
+      }
+      else if (!acquire_capture_display(
+                 disp,
+                 encoder.platform_formats->dev_type,
+                 display_names,
+                 display_p,
+                 config,
+                 target_display_name,
+                 [&encode_session_ctx_queue]() { return encode_session_ctx_queue.running(); },
+                 "synchronous")) {
+        if (!encode_session_ctx_queue.running()) {
+          return encode_e::ok;
+        }
+        continue;
       }
 
-      // reset_display() will sleep between retries
-      reset_display(disp, encoder.platform_formats->dev_type, target_display_name, config);
       if (disp) {
         active_display_name = target_display_name;
         active_display_event->raise(target_display_name);

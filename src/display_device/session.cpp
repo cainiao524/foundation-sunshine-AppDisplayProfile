@@ -391,9 +391,10 @@ namespace display_device {
 
   session_t::vdd_stage_result_e
   session_t::apply_vdd_display_stage(const parsed_config_t &config,
+    const boost::optional<active_topology_t> &pre_vdd_topology,
     const boost::optional<device_info_map_t> &pre_vdd_devices) {
     if (config.vdd_prep != parsed_config_t::vdd_prep_e::no_operation &&
-        !vdd_utils::apply_vdd_prep(config.device_id, config.vdd_prep, pre_vdd_devices)) {
+        !vdd_utils::apply_vdd_prep(config.device_id, config.vdd_prep, pre_vdd_topology, pre_vdd_devices)) {
       return vdd_stage_result_e::topology_failed;
     }
 
@@ -484,22 +485,29 @@ namespace display_device {
     boost::optional<active_topology_t> pre_saved_initial_topology = pending_vdd_.initial_topology;
     boost::optional<device_display_mode_map_t> pre_saved_initial_modes = pending_vdd_.initial_modes;
     if (should_prepare_vdd) {
-      const bool vdd_already_exists = !display_device::find_device_by_friendlyname(ZAKO_NAME).empty();
+      const auto existing_vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+      const bool vdd_already_exists = !existing_vdd_id.empty();
+      const auto current_topology_before_vdd = get_current_topology();
+      const auto current_device_ids = get_device_ids_from_topology(current_topology_before_vdd);
+      const bool vdd_is_already_active = vdd_already_exists && current_device_ids.contains(existing_vdd_id);
       if (will_disable_physical_displays) {
         settings.capture_audio_sink();
       }
 
-      if (pending_restore_ && settings.has_persistent_data()) {
+      if (pending_vdd_.initial_topology) {
+        BOOST_LOG(debug) << "保留当前逻辑VDD会话的首次物理拓扑基线";
+      }
+      else if (pending_restore_ && settings.has_persistent_data()) {
         BOOST_LOG(info) << (vdd_already_exists ?
                               "有待恢复的设置且 VDD 仍存在，保留原有初始拓扑" :
                               "有待恢复的设置，保留原有初始拓扑");
         cancel_pending_display_retry();
       }
-      else if (vdd_already_exists) {
+      else if (vdd_is_already_active) {
         BOOST_LOG(debug) << "VDD already exists, skipping initial topology save (topology may be corrupted)";
       }
       else if (!is_system_rdp_vdd_session) {
-        pending_vdd_.initial_topology = get_current_topology();
+        pending_vdd_.initial_topology = current_topology_before_vdd;
         pre_saved_initial_topology = pending_vdd_.initial_topology;
         const auto initial_device_ids = get_device_ids_from_topology(*pre_saved_initial_topology);
         const auto initial_modes = get_current_display_modes(
@@ -510,6 +518,13 @@ namespace display_device {
           BOOST_LOG(debug) << "Pre-saved initial display modes before VDD creation: " << to_string(*pre_saved_initial_modes);
         }
         BOOST_LOG(debug) << "Pre-saved initial topology before VDD creation: " << to_string(*pre_saved_initial_topology);
+
+        // 常驻但未激活的 VDD 不属于当前物理拓扑，此时设备枚举仍是可信基线。
+        // prepare_vdd() 不会重新创建该 VDD，因此需要在这里保存设备身份快照。
+        if (vdd_already_exists) {
+          pending_vdd_.pre_vdd_devices = display_device::enum_available_devices();
+          BOOST_LOG(debug) << "Pre-saved physical devices before activating the dormant VDD";
+        }
       }
 
       boost::optional<device_info_map_t> captured_pre_vdd_devices;
@@ -579,7 +594,7 @@ namespace display_device {
         }
 
         if (should_prepare_vdd) {
-          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_vdd_devices);
+          const auto vdd_stage_result = apply_vdd_display_stage(config_copy, pre_saved_initial_topology, pre_vdd_devices);
           if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
             BOOST_LOG(warning) << "The rebuilt VDD has not published the requested mode yet; retrying the deferred display configuration";
             return false;
@@ -616,7 +631,9 @@ namespace display_device {
           platf::vulkan_hdr_bridge::disable();
         }
 #endif
-        pending_vdd_.reset();
+        if (!should_prepare_vdd) {
+          pending_vdd_.reset();
+        }
         return true;
       });
 
@@ -633,7 +650,10 @@ namespace display_device {
     cancel_pending_display_retry();
 
     if (should_prepare_vdd) {
-      const auto vdd_stage_result = apply_vdd_display_stage(*parsed_config, pending_vdd_.pre_vdd_devices);
+      const auto vdd_stage_result = apply_vdd_display_stage(
+        *parsed_config,
+        pre_saved_initial_topology,
+        pending_vdd_.pre_vdd_devices);
       if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
         restore_state_impl(revert_reason_e::config_cleanup);
         return {
@@ -661,7 +681,9 @@ namespace display_device {
       pending_vdd_.pre_vdd_devices);
     if (apply_result) {
       timer->setup_timer(nullptr);
-      pending_vdd_.reset();
+      if (!should_prepare_vdd) {
+        pending_vdd_.reset();
+      }
 #ifdef _WIN32
       if (vulkan_hdr_bridge_requested) {
         if (!platf::vulkan_hdr_bridge::enable_for_vdd_hdr_session()) {

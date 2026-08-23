@@ -299,9 +299,23 @@ namespace display_device::vdd_utils {
   ensure_vdd_extended_mode(const std::string &device_id, const std::vector<std::string> &physical_devices_to_preserve = {});
 
   /**
+   * @brief Build the requested VDD topology without changing the saved physical topology.
+   * @param vdd_device_id The VDD device ID.
+   * @param vdd_prep The requested VDD placement.
+   * @param physical_topology Physical topology captured before VDD creation.
+   * @returns A topology with the VDD overlaid on the unchanged physical groups.
+   */
+  active_topology_t
+  build_vdd_overlay_topology(
+    const std::string &vdd_device_id,
+    parsed_config_t::vdd_prep_e vdd_prep,
+    const active_topology_t &physical_topology);
+
+  /**
    * @brief Apply VDD prep settings to handle physical displays.
    * @param vdd_device_id The VDD device ID.
    * @param vdd_prep The vdd_prep_e value specifying how to handle physical displays.
+   * @param pre_vdd_topology Physical topology captured before VDD creation.
    * @param pre_vdd_devices Physical device info captured before VDD creation.
    *        An engaged empty map represents a headless host. An unengaged value
    *        falls back to current device enumeration.
@@ -311,6 +325,7 @@ namespace display_device::vdd_utils {
    */
   bool
   apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
+    const boost::optional<active_topology_t> &pre_vdd_topology,
     const boost::optional<device_info_map_t> &pre_vdd_devices);
 
   VddSettings

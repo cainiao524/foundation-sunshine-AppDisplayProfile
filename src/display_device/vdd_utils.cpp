@@ -28,6 +28,7 @@
 #include "src/globals.h"
 #include "src/platform/common.h"
 #include "src/platform/run_command.h"
+#include "src/platform/windows/display_device/settings_topology.h"
 #include "src/platform/windows/display_device/windows_utils.h"
 #include "src/rtsp.h"
 #include "src/tray/system_tray.h"
@@ -50,7 +51,7 @@ namespace display_device {
     static std::string last_used_client_uuid;
 
     namespace {
-      constexpr auto kModePublicationTimeout = 3s;
+      constexpr auto kModePublicationTimeout = 8s;
       constexpr auto kModePublicationInitialPoll = 50ms;
       constexpr auto kModePublicationMaxPoll = 500ms;
       std::atomic_bool hardware_cursor_live_enable_confirmed { false };
@@ -966,8 +967,50 @@ namespace display_device {
       return false;
     }
 
+    active_topology_t
+    build_vdd_overlay_topology(
+      const std::string &vdd_device_id,
+      parsed_config_t::vdd_prep_e vdd_prep,
+      const active_topology_t &physical_topology) {
+      active_topology_t preserved_physical_topology;
+      preserved_physical_topology.reserve(physical_topology.size());
+
+      for (const auto &group : physical_topology) {
+        std::vector<std::string> physical_group;
+        physical_group.reserve(group.size());
+        for (const auto &device_id : group) {
+          if (!device_id.empty() && device_id != vdd_device_id) {
+            physical_group.push_back(device_id);
+          }
+        }
+        if (!physical_group.empty()) {
+          preserved_physical_topology.push_back(std::move(physical_group));
+        }
+      }
+
+      switch (vdd_prep) {
+        case parsed_config_t::vdd_prep_e::vdd_as_primary: {
+          active_topology_t topology { { vdd_device_id } };
+          topology.insert(
+            topology.end(),
+            preserved_physical_topology.begin(),
+            preserved_physical_topology.end());
+          return topology;
+        }
+        case parsed_config_t::vdd_prep_e::vdd_as_secondary:
+          preserved_physical_topology.push_back({ vdd_device_id });
+          return preserved_physical_topology;
+        case parsed_config_t::vdd_prep_e::display_off:
+          return { { vdd_device_id } };
+        case parsed_config_t::vdd_prep_e::no_operation:
+        default:
+          return preserved_physical_topology;
+      }
+    }
+
     bool
     apply_vdd_prep(const std::string &vdd_device_id, parsed_config_t::vdd_prep_e vdd_prep,
+      const boost::optional<active_topology_t> &pre_vdd_topology,
       const boost::optional<device_info_map_t> &pre_vdd_devices) {
       if (vdd_device_id.empty()) {
         BOOST_LOG(info) << "VDD设备ID为空，跳过vdd_prep处理";
@@ -979,34 +1022,56 @@ namespace display_device {
         return true;
       }
 
-      // 从 pre_vdd_devices（VDD创建前保存的设备列表）中获取物理显示器，
-      // 确保即使 VDD 创建后物理屏变 inactive 也能正确识别
-      std::vector<std::string> physical_devices;
-      std::string original_primary_id;
       const auto is_active_physical_display = [](const device_info_t &info) {
         return info.friendly_name != ZAKO_NAME &&
                (info.device_state == device_state_e::active ||
                 info.device_state == device_state_e::primary);
       };
 
-      if (pre_vdd_devices) {
-        // 使用 VDD 创建前保存的设备信息（可靠）
-        for (const auto &[device_id, info] : *pre_vdd_devices) {
-          if (is_active_physical_display(info)) {
-            physical_devices.push_back(device_id);
+      const auto collect_identities = [](const device_info_map_t &devices) {
+        device_identity_map_t identities;
+        for (const auto &[device_id, info] : devices) {
+          identities.emplace(device_id, info.physical_identity);
+        }
+        return identities;
+      };
+
+      const auto current_devices = enum_available_devices();
+      active_topology_t physical_topology;
+      std::string original_primary_id;
+
+      if (pre_vdd_topology) {
+        physical_topology = *pre_vdd_topology;
+        const auto expected_device_ids = get_device_ids_from_topology(physical_topology);
+        if (pre_vdd_devices) {
+          const auto remap = resolve_device_id_remaps(
+            expected_device_ids,
+            collect_identities(*pre_vdd_devices),
+            collect_identities(current_devices));
+          if (!remap.unresolved_device_ids.empty()) {
+            BOOST_LOG(error) << "无法安全映射pre-VDD物理显示器，拒绝修改拓扑: "
+                             << remap.unresolved_device_ids.size() << "个设备ID无法解析";
+            return false;
+          }
+
+          remap_topology_device_ids(physical_topology, remap.replacements);
+          for (const auto &[device_id, info] : *pre_vdd_devices) {
             if (info.device_state == device_state_e::primary) {
-              original_primary_id = device_id;
+              const auto replacement = remap.replacements.find(device_id);
+              original_primary_id = replacement == remap.replacements.end() ?
+                                      device_id : replacement->second;
+              break;
             }
           }
         }
-        BOOST_LOG(info) << "使用pre-VDD设备列表: " << physical_devices.size() << "个物理显示器"
-                        << (original_primary_id.empty() ? "" : ", 原主屏: " + original_primary_id);
+
+        BOOST_LOG(info) << "使用pre-VDD完整物理拓扑: " << to_string(physical_topology);
       }
       else {
-        // 回退：从当前设备枚举中获取（VDD创建前未保存时的兜底逻辑）
-        BOOST_LOG(warning) << "未提供pre-VDD设备列表，从当前设备枚举中查找物理显示器";
-        const auto all_devices = enum_available_devices();
-        for (const auto &[device_id, info] : all_devices) {
+        BOOST_LOG(warning) << "未提供pre-VDD拓扑，使用设备快照构建兼容拓扑";
+        std::vector<std::string> physical_devices;
+        const auto &baseline_devices = pre_vdd_devices ? *pre_vdd_devices : current_devices;
+        for (const auto &[device_id, info] : baseline_devices) {
           if (device_id != vdd_device_id && is_active_physical_display(info)) {
             physical_devices.push_back(device_id);
             if (info.device_state == device_state_e::primary) {
@@ -1014,60 +1079,48 @@ namespace display_device {
             }
           }
         }
-      }
 
-      // 确保原主屏在列表最前面（set_topology 中第一组拥有主屏优先权）
-      if (!original_primary_id.empty()) {
-        auto it = std::find(physical_devices.begin(), physical_devices.end(), original_primary_id);
-        if (it != physical_devices.begin() && it != physical_devices.end()) {
-          std::rotate(physical_devices.begin(), it, it + 1);
+        if (!original_primary_id.empty()) {
+          const auto primary = std::find(physical_devices.begin(), physical_devices.end(), original_primary_id);
+          if (primary != physical_devices.end() && primary != physical_devices.begin()) {
+            std::rotate(physical_devices.begin(), primary, primary + 1);
+          }
+        }
+        for (const auto &device_id : physical_devices) {
+          physical_topology.push_back({ device_id });
         }
       }
 
-      if (physical_devices.empty()) {
+      if (original_primary_id.empty()) {
+        for (const auto &group : physical_topology) {
+          if (!group.empty()) {
+            original_primary_id = group.front();
+            break;
+          }
+        }
+      }
+
+      if (physical_topology.empty()) {
         // Continue building a VDD-only topology. This is required on headless
         // systems where a cold-created monitor is not activated automatically.
         BOOST_LOG(debug) << "No physical displays to preserve; activating a VDD-only topology";
       }
 
-      active_topology_t new_topology;
-
       switch (vdd_prep) {
-        case parsed_config_t::vdd_prep_e::vdd_as_primary: {
-          // VDD为主屏模式：VDD放在第一位（主屏），物理显示器作为扩展显示器
+        case parsed_config_t::vdd_prep_e::vdd_as_primary:
           BOOST_LOG(info) << "应用vdd_prep: VDD为主屏，物理显示器为副屏";
-          // VDD单独一组（放在第一位作为主显示器）
-          new_topology.push_back({ vdd_device_id });
-          // 每个物理显示器单独一组（扩展模式）
-          for (const auto &physical_id : physical_devices) {
-            new_topology.push_back({ physical_id });
-          }
           break;
-        }
-
-        case parsed_config_t::vdd_prep_e::vdd_as_secondary: {
-          // VDD为副屏模式：物理显示器为主屏，VDD作为扩展显示器
+        case parsed_config_t::vdd_prep_e::vdd_as_secondary:
           BOOST_LOG(info) << "应用vdd_prep: 物理显示器为主屏，VDD为副屏";
-          // 物理显示器放在前面（第一个为主显示器）
-          for (const auto &physical_id : physical_devices) {
-            new_topology.push_back({ physical_id });
-          }
-          // VDD单独一组（作为副显示器）
-          new_topology.push_back({ vdd_device_id });
           break;
-        }
-
-        case parsed_config_t::vdd_prep_e::display_off: {
-          // 熄屏模式：只保留VDD，关闭所有物理显示器
+        case parsed_config_t::vdd_prep_e::display_off:
           BOOST_LOG(info) << "应用vdd_prep: 关闭物理显示器";
-          new_topology.push_back({ vdd_device_id });
-          // 不添加物理显示器，它们将被禁用
           break;
-        }
-
         default:
           return true;
       }
+
+      const auto new_topology = build_vdd_overlay_topology(vdd_device_id, vdd_prep, physical_topology);
 
       if (!is_topology_valid(new_topology)) {
         BOOST_LOG(error) << "新拓扑无效";
