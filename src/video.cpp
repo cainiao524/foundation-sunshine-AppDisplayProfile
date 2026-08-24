@@ -32,7 +32,6 @@ extern "C" {
 #include "cbs.h"
 #include "config.h"
 #include "display_device/display_device.h"
-#include "display_device/session.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
@@ -50,6 +49,10 @@ extern "C" {
 }
   #include "platform/windows/display_device/windows_utils.h"
   #include "platform/windows/display.h"
+  // Must come after the Windows display headers: the display header depends on
+  // windows.h being included first, and session.h pulls in cross-platform
+  // display-device headers that must not precede it.
+  #include "display_device/session.h"
 #endif
 
 using namespace std::literals;
