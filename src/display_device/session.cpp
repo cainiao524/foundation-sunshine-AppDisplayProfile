@@ -969,6 +969,35 @@ namespace display_device {
     restore_state_impl();
   }
 
+  bool
+  session_t::reassert_vdd_session_topology() {
+    std::lock_guard lock { mutex };
+
+    if (!current_use_vdd.value_or(false) || !current_vdd_prep) {
+      return false;
+    }
+
+    const std::string vdd_device_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
+    if (vdd_device_id.empty()) {
+      BOOST_LOG(warning) << "VDD topology re-assert skipped: no VDD device is present";
+      return false;
+    }
+
+    BOOST_LOG(info) << "Re-asserting the session VDD topology after capture loss";
+    const bool ok = vdd_utils::apply_vdd_prep(
+      vdd_device_id,
+      *current_vdd_prep,
+      pending_vdd_.initial_topology,
+      pending_vdd_.pre_vdd_devices);
+    if (ok) {
+      BOOST_LOG(info) << "VDD topology re-asserted";
+    }
+    else {
+      BOOST_LOG(warning) << "VDD topology re-assert failed";
+    }
+    return ok;
+  }
+
   void
   session_t::reset_persistence() {
     std::lock_guard lock { mutex };

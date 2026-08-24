@@ -32,6 +32,7 @@ extern "C" {
 #include "cbs.h"
 #include "config.h"
 #include "display_device/display_device.h"
+#include "display_device/session.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
@@ -1877,8 +1878,9 @@ namespace video {
       const std::function<bool()> &keep_waiting,
       std::string_view context) {
       const bool explicit_target = !config.display_name.empty();
-      const auto deadline = std::chrono::steady_clock::now() + explicit_display_ready_timeout;
+      auto deadline = std::chrono::steady_clock::now() + explicit_display_ready_timeout;
       bool waiting_logged = false;
+      bool topology_reassert_attempted = false;
 
       while (keep_waiting()) {
         std::string resolved_display_name;
@@ -1935,6 +1937,19 @@ namespace video {
 
         const auto now = std::chrono::steady_clock::now();
         if (now >= deadline) {
+          // 捕获目标长时间无法就绪：双显卡笔记本上面板的 GPU 路径切换可能使
+          // VDD 输出从活动拓扑中掉出。让显示会话按会话初保存的基线重新断言
+          // VDD 拓扑一次，并再给一个完整的重试窗口；仍失败才放弃。
+          if (explicit_target && !topology_reassert_attempted) {
+            topology_reassert_attempted = true;
+            BOOST_LOG(info) << "Exact capture target did not become ready; re-asserting the session VDD topology [context=" << context << ']';
+#ifdef _WIN32
+            display_device::session_t::get().reassert_vdd_session_topology();
+#endif
+            deadline = std::chrono::steady_clock::now() + explicit_display_ready_timeout;
+            continue;
+          }
+
           BOOST_LOG(error) << "Client-specified display [" << config.display_name
                            << "] did not become capture-ready; refusing to fall back to another display"
                            << " [context=" << context << ']';

@@ -1044,10 +1044,34 @@ namespace display_device {
         physical_topology = *pre_vdd_topology;
         const auto expected_device_ids = get_device_ids_from_topology(physical_topology);
         if (pre_vdd_devices) {
-          const auto remap = resolve_device_id_remaps(
+          auto saved_identities = collect_identities(*pre_vdd_devices);
+          auto remap = resolve_device_id_remaps(
             expected_device_ids,
-            collect_identities(*pre_vdd_devices),
+            saved_identities,
             collect_identities(current_devices));
+
+          // 与恢复路径保持一致：笔记本面板的 GPU 路径切换后，pre-VDD 快照中的
+          // 物理显示器可能已不在当前枚举里。无法直接解析时，从历史 PnP 数据迁移
+          // 身份后重试，避免在"恢复串流/切换 APP"时因映射失败而拒绝修改拓扑。
+          if (!remap.unresolved_device_ids.empty()) {
+            const auto historical_identities = w_utils::get_historical_physical_device_identities();
+            bool migrated_identity = false;
+            for (const auto &device_id : remap.unresolved_device_ids) {
+              if (const auto historical = historical_identities.find(device_id);
+                  historical != historical_identities.end() && !historical->second.empty()) {
+                BOOST_LOG(info) << "Migrating physical display identity from historical PnP data: " << device_id;
+                saved_identities[device_id] = historical->second;
+                migrated_identity = true;
+              }
+            }
+            if (migrated_identity) {
+              remap = resolve_device_id_remaps(
+                expected_device_ids,
+                saved_identities,
+                collect_identities(current_devices));
+            }
+          }
+
           if (!remap.unresolved_device_ids.empty()) {
             BOOST_LOG(error) << "无法安全映射pre-VDD物理显示器，拒绝修改拓扑: "
                              << remap.unresolved_device_ids.size() << "个设备ID无法解析";

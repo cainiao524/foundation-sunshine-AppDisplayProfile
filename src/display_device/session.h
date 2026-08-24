@@ -167,6 +167,20 @@ namespace display_device {
     restore_state();
 
     /**
+     * @brief Re-assert the session VDD topology after the exact VDD capture
+     *        target has been lost (e.g. the panel GPU path switched and the
+     *        VDD output dropped out of the active topology).
+     * @details Intended to be called from the capture retry path while the
+     *          stream is still running. No-op when there is no active VDD
+     *          session or no VDD device present. Uses the pre-VDD baseline
+     *          saved at session start so the physical-primary/VDD-secondary
+     *          invariant is preserved.
+     * @returns True if the topology was re-applied successfully.
+     */
+    bool
+    reassert_vdd_session_topology();
+
+    /**
      * @brief Reset the persistence and currently held initial display state.
      *
      * This is normally used to get out of the "broken" state where the algorithm wants
