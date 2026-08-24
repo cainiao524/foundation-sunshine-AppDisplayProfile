@@ -1,6 +1,7 @@
 // standard includes
 #include <algorithm>
 #include <chrono>
+#include <cmath>
 #include <fstream>
 #include <set>
 #include <thread>
@@ -913,6 +914,10 @@ namespace display_device {
       std::unordered_set<std::string> newly_enabled_devices;
       auto current_topology = get_current_topology();
 
+      // 保存用于"初始拓扑恢复后最终模式校验"的原始模式快照。
+      // 早期的模式恢复成功后会清空 data.original_modes，因此必须先保存副本。
+      const auto original_modes_snapshot = data.original_modes;
+
       // Handle modified topology changes
       if (have_changes_for_modified_topology) {
         if (modified_topology_valid && set_topology(data.topology.modified)) {
@@ -981,6 +986,99 @@ namespace display_device {
       else {
         BOOST_LOG(warning) << "Initial topology invalid; keeping restore data for retry";
         partially_failed = true;
+      }
+
+      // 最终模式校验与修复：双显卡笔记本的面板通常存在两条 GPU 路径（核显/独显），
+      // 会话期间可能发生路径切换或短暂丢失（"GPU path change"）。恢复初始拓扑后
+      // Windows 未必把活动主屏恢复到串流前的模式（例如停留在 VDD 的客户端分辨率），
+      // 这里做最终校验，不一致时按保存的原始模式重新应用并重试。
+      if (!original_modes_snapshot.empty()) {
+        const auto refresh_rates_approximately_equal = [](const refresh_rate_t &a, const refresh_rate_t &b) {
+          if (a.denominator == 0 || b.denominator == 0) {
+            return a.numerator == b.numerator && a.denominator == b.denominator;
+          }
+          const double hz_a = static_cast<double>(a.numerator) / static_cast<double>(a.denominator);
+          const double hz_b = static_cast<double>(b.numerator) / static_cast<double>(b.denominator);
+          return std::abs(hz_a - hz_b) < 0.5;
+        };
+
+        constexpr int max_mode_verify_attempts = 3;
+        bool modes_verified = false;
+        for (int attempt = 0; attempt < max_mode_verify_attempts && !modes_verified; ++attempt) {
+          const auto available_devices = enum_available_devices();
+
+          // 期望的原始模式按"当前活动设备"重新定位：设备 ID 直接命中优先，
+          // 否则按物理身份匹配当前活动设备（面板可能在恢复期间再次切换 GPU 路径）。
+          device_display_mode_map_t expected_modes_to_check;
+          bool all_expected_resolved = true;
+          for (const auto &[expected_id, expected_mode] : original_modes_snapshot) {
+            const auto direct_it = available_devices.find(expected_id);
+            if (direct_it != available_devices.end() &&
+                (direct_it->second.device_state == device_state_e::active ||
+                 direct_it->second.device_state == device_state_e::primary)) {
+              expected_modes_to_check[expected_id] = expected_mode;
+              continue;
+            }
+
+            const auto identity_it = data.device_identities.find(expected_id);
+            const auto expected_identity = identity_it == data.device_identities.end() ? std::string {} : identity_it->second;
+            bool resolved = false;
+            if (!expected_identity.empty()) {
+              for (const auto &[candidate_id, candidate_info] : available_devices) {
+                if ((candidate_info.device_state == device_state_e::active ||
+                     candidate_info.device_state == device_state_e::primary) &&
+                    candidate_info.physical_identity == expected_identity) {
+                  BOOST_LOG(info) << "Resolving restored display mode through physical identity after GPU path change: "
+                                  << expected_id << " -> " << candidate_id;
+                  expected_modes_to_check[candidate_id] = expected_mode;
+                  resolved = true;
+                  break;
+                }
+              }
+            }
+            if (!resolved) {
+              all_expected_resolved = false;
+            }
+          }
+
+          if (all_expected_resolved) {
+            std::unordered_set<std::string> check_ids;
+            for (const auto &[device_id, _mode] : expected_modes_to_check) {
+              check_ids.insert(device_id);
+            }
+            const auto current_modes = get_current_display_modes(check_ids);
+            modes_verified = current_modes.size() == expected_modes_to_check.size();
+            if (modes_verified) {
+              for (const auto &[device_id, expected_mode] : expected_modes_to_check) {
+                const auto mode_it = current_modes.find(device_id);
+                if (mode_it == current_modes.end() ||
+                    mode_it->second.resolution.width != expected_mode.resolution.width ||
+                    mode_it->second.resolution.height != expected_mode.resolution.height ||
+                    !refresh_rates_approximately_equal(mode_it->second.refresh_rate, expected_mode.refresh_rate)) {
+                  modes_verified = false;
+                  break;
+                }
+              }
+            }
+          }
+
+          if (modes_verified) {
+            break;
+          }
+
+          BOOST_LOG(warning) << "Restored display mode verification failed (attempt " << (attempt + 1)
+                             << "/" << max_mode_verify_attempts << "); re-applying the original display modes";
+          if (!set_display_modes(expected_modes_to_check.empty() ? original_modes_snapshot : expected_modes_to_check)) {
+            BOOST_LOG(error) << "Failed to re-apply the original display modes during verification";
+          }
+          if (attempt + 1 < max_mode_verify_attempts) {
+            std::this_thread::sleep_for(300ms);
+          }
+        }
+
+        if (!modes_verified) {
+          BOOST_LOG(error) << "Restored display mode verification failed after all attempts; the primary display may keep an unexpected resolution";
+        }
       }
 
       // Fix HDR states for newly enabled devices
