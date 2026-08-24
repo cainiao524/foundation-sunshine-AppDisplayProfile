@@ -1883,7 +1883,10 @@ namespace video {
       const bool explicit_target = !config.display_name.empty();
       auto deadline = std::chrono::steady_clock::now() + explicit_display_ready_timeout;
       bool waiting_logged = false;
-      bool topology_reassert_attempted = false;
+      int topology_reassert_count = 0;
+      std::optional<std::chrono::steady_clock::time_point> first_failure_time;
+      constexpr int max_topology_reasserts = 2;
+      constexpr auto early_reassert_delay = 3s;
 
       while (keep_waiting()) {
         std::string resolved_display_name;
@@ -1939,20 +1942,31 @@ namespace video {
         }
 
         const auto now = std::chrono::steady_clock::now();
-        if (now >= deadline) {
+        if (explicit_target) {
+          if (!first_failure_time) {
+            first_failure_time = now;
+          }
           // 捕获目标长时间无法就绪：双显卡笔记本上面板的 GPU 路径切换可能使
           // VDD 输出从活动拓扑中掉出。让显示会话按会话初保存的基线重新断言
-          // VDD 拓扑一次，并再给一个完整的重试窗口；仍失败才放弃。
-          if (explicit_target && !topology_reassert_attempted) {
-            topology_reassert_attempted = true;
-            BOOST_LOG(info) << "Exact capture target did not become ready; re-asserting the session VDD topology [context=" << context << ']';
+          // VDD 拓扑：首次在 ~3 秒后提前尝试（若路径切换已完成可大幅缩短
+          // 断流窗口），随后在完整超时点再兜底一次；仍失败才放弃。
+          const bool early_reassert_due =
+            topology_reassert_count == 0 &&
+            now >= *first_failure_time + early_reassert_delay;
+          if (topology_reassert_count < max_topology_reasserts && (now >= deadline || early_reassert_due)) {
+            ++topology_reassert_count;
+            BOOST_LOG(info) << "Exact capture target did not become ready; re-asserting the session VDD topology [context=" << context
+                            << ", attempt=" << topology_reassert_count << '/' << max_topology_reasserts << ']';
 #ifdef _WIN32
             display_device::session_t::get().reassert_vdd_session_topology();
 #endif
             deadline = std::chrono::steady_clock::now() + explicit_display_ready_timeout;
+            first_failure_time.reset();
             continue;
           }
+        }
 
+        if (now >= deadline) {
           BOOST_LOG(error) << "Client-specified display [" << config.display_name
                            << "] did not become capture-ready; refusing to fall back to another display"
                            << " [context=" << context << ']';
