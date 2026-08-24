@@ -329,6 +329,7 @@ namespace display_device {
     std::mutex mutex; /**< A mutex for ensuring thread-safety. */
     std::string current_vdd_client_id; /**< Current client ID associated with VDD monitor. */
     std::optional<vdd_utils::hdr_brightness_t> current_vdd_hdr_brightness; /**< HDR capabilities currently programmed into VDD. */
+    boost::optional<display_mode_t> current_vdd_mode; /**< Session VDD display mode, re-applied after a topology re-assert. */
     std::string original_output_name; /**< Original output_name value before VDD device ID was set. */
     boost::optional<parsed_config_t::device_prep_e> current_device_prep; /**< Current device preparation mode, respecting client overrides. */
     boost::optional<parsed_config_t::vdd_prep_e> current_vdd_prep; /**< Current VDD preparation mode for VDD mode sessions. */

@@ -203,6 +203,7 @@ namespace display_device {
     current_device_prep.reset();
     current_vdd_prep.reset();
     current_use_vdd.reset();
+    current_vdd_mode.reset();
     pending_vdd_.reset();
     // 恢复原始的 output_name，避免下一个会话使用已销毁的 VDD 设备 ID
     if (!original_output_name.empty()) {
@@ -566,6 +567,15 @@ namespace display_device {
     current_device_prep = parsed_config->device_prep;
     current_vdd_prep = parsed_config->vdd_prep;
     current_use_vdd = parsed_config->use_vdd;
+
+    // 保存会话 VDD 模式：拓扑重断言（GPU 路径切换恢复）后 Windows 会把
+    // VDD 重置为默认模式（如 1280x720），需要按会话模式重新应用。
+    if (parsed_config->resolution && parsed_config->refresh_rate) {
+      current_vdd_mode = display_mode_t { *parsed_config->resolution, *parsed_config->refresh_rate };
+    }
+    else {
+      current_vdd_mode.reset();
+    }
 
     if (is_system_rdp_vdd_session) {
       // SYSTEM 服务可以在 RDP 会话中创建 VDD，但此时 Windows 无法提供
@@ -989,13 +999,35 @@ namespace display_device {
       *current_vdd_prep,
       pending_vdd_.initial_topology,
       pending_vdd_.pre_vdd_devices);
-    if (ok) {
-      BOOST_LOG(info) << "VDD topology re-asserted";
-    }
-    else {
+    if (!ok) {
       BOOST_LOG(warning) << "VDD topology re-assert failed";
+      return false;
     }
-    return ok;
+
+    BOOST_LOG(info) << "VDD topology re-asserted";
+
+    // 拓扑重断言后 Windows 通常会把 VDD 重置为默认模式（如 1280x720），
+    // 必须按会话保存的模式重新应用，否则串流分辨率不再是客户端请求的
+    // 分辨率（"没有自动识别成手机分辨率"）。
+    if (current_vdd_mode) {
+      constexpr int max_mode_reapply_attempts = 3;
+      for (int attempt = 0; attempt < max_mode_reapply_attempts; ++attempt) {
+        std::this_thread::sleep_for(400ms);
+
+        device_display_mode_map_t session_modes;
+        session_modes[vdd_device_id] = *current_vdd_mode;
+        if (set_display_modes(session_modes)) {
+          BOOST_LOG(info) << "Re-applied the session VDD mode after topology re-assert: "
+                          << current_vdd_mode->resolution.width << 'x' << current_vdd_mode->resolution.height
+                          << '@' << current_vdd_mode->refresh_rate.numerator << '/' << current_vdd_mode->refresh_rate.denominator;
+          return true;
+        }
+        BOOST_LOG(warning) << "Failed to re-apply the session VDD mode (attempt " << (attempt + 1)
+                           << "/" << max_mode_reapply_attempts << ')';
+      }
+      BOOST_LOG(error) << "Could not re-apply the session VDD mode after topology re-assert";
+    }
+    return true;
   }
 
   void

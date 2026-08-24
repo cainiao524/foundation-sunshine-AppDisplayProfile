@@ -1179,27 +1179,33 @@ namespace display_device {
           return set_as_primary_device(original_primary_id);
         };
 
-        if (!retry_with_backoff(ensure_physical_primary, RetryConfig {
-              .max_attempts = 3,
-              .initial_delay = 100ms,
-              .max_delay = 500ms,
+        // 双显卡面板路径切换期间 set_as_primary_device 可能瞬时返回
+        // ERROR_GEN_FAILURE。多给几次重试机会，等路径切换稳定后再确认主屏。
+        const bool retried = retry_with_backoff(ensure_physical_primary, RetryConfig {
+              .max_attempts = 6,
+              .initial_delay = 200ms,
+              .max_delay = 1000ms,
               .context = "VDD secondary primary verification"
-            })) {
-          BOOST_LOG(error) << "VDD副屏模式未能确认物理显示器为主屏";
-          return false;
-        }
+            });
 
         const auto final_devices = enum_available_devices();
         const auto physical_it = final_devices.find(original_primary_id);
         const auto vdd_it = final_devices.find(vdd_device_id);
-        if (physical_it == final_devices.end() || vdd_it == final_devices.end() ||
-            physical_it->second.device_state != device_state_e::primary ||
-            vdd_it->second.device_state == device_state_e::primary) {
-          BOOST_LOG(error) << "VDD副屏模式最终主屏校验失败: " << to_string(final_devices);
-          return false;
-        }
+        const bool final_verified = retried &&
+          physical_it != final_devices.end() && vdd_it != final_devices.end() &&
+          physical_it->second.device_state == device_state_e::primary &&
+          vdd_it->second.device_state != device_state_e::primary;
 
-        BOOST_LOG(info) << "VDD副屏模式已确认物理显示器为主屏，VDD为副屏";
+        if (final_verified) {
+          BOOST_LOG(info) << "VDD副屏模式已确认物理显示器为主屏，VDD为副屏";
+        }
+        else {
+          // 主屏校验失败（常见于面板 GPU 路径切换中）不再中止整个会话：
+          // 物理主屏身份会在退出恢复阶段重新校正，强行终止串流反而让用户
+          // 什么都用不了。
+          BOOST_LOG(warning) << "VDD副屏模式主屏校验未通过（面板 GPU 路径切换中），继续串流，"
+                             << "退出时再校正主屏: " << to_string(final_devices);
+        }
       }
 
       BOOST_LOG(info) << "成功应用vdd_prep设置";
