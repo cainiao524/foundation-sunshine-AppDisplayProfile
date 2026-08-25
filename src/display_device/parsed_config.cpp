@@ -537,12 +537,6 @@ namespace display_device {
 
       switch (static_cast<device_prep_e>(session.custom_screen_mode)) {
         case device_prep_e::no_operation:
-          // Moonlight V+ 的"无操作"语义 = 客户端不指定显示操作，跟随本体（全局）
-          // 设置，而不是 no_operation（什么都不做）。全局为 no_operation 时由
-          // resolve_display_intent 的放弃逻辑（串流当前活动显示器）兜底。
-          BOOST_LOG(debug) << "客户端屏幕模式为无操作，跟随全局显示设置: "sv
-                           << static_cast<int>(configured);
-          return configured;
         case device_prep_e::ensure_active:
         case device_prep_e::ensure_primary:
         case device_prep_e::ensure_only_display:
@@ -591,51 +585,6 @@ namespace display_device {
     explicit_vdd = explicit_vdd || (session.display_target_override != 0 && intent.device_id == VDD_NAME);
 #endif
     if (explicit_vdd) {
-      // Moonlight V+ 可能同时发送 useVdd=1 与 customScreenMode=0（屏幕组合：无操作）。
-      // "无操作"语义 = 不创建/不激活 VDD、不改变显示拓扑，直接串流当前活动显示器。
-      // 仅当以下条件全部满足时才放弃 VDD 目标：
-      //  - 非 APP 强制虚拟目标（APP 配置的 target=1 是服务端显式意图，始终尊重）；
-      //  - 解析出的 device_prep 为 no_operation（ensure_active 映射到 vdd_prep 也是
-      //    no_operation，但它是"激活"意图，不得放弃）；
-      //  - 客户端未点名虚拟屏（display_name 指向 Zako HDR 或指向不存在的显示器时不放弃）；
-      //  - 存在活动物理显示器（无头主机/笔记本盒盖断屏时 VDD 是唯一输出，不放弃）。
-      bool drop_vdd = false;
-#ifdef _WIN32
-      if (session.display_target_override == 0 &&
-          intent.device_prep == parsed_config_t::device_prep_e::no_operation) {
-        bool preserve_vdd = false;
-        bool has_active_physical = false;
-        if (const auto available_devices = enum_available_devices_checked()) {
-          for (const auto &[device_id, info] : *available_devices) {
-            if (info.friendly_name == ZAKO_NAME) {
-              if (intent.device_id == device_id) {
-                preserve_vdd = true;  // 点名虚拟屏
-              }
-            }
-            else if (info.device_state == display_device::device_state_e::active ||
-                     info.device_state == display_device::device_state_e::primary) {
-              has_active_physical = true;
-            }
-          }
-          if (!intent.device_id.empty() &&
-              available_devices->find(intent.device_id) == available_devices->end()) {
-            preserve_vdd = true;  // 点名了不存在的显示器
-          }
-        }
-        else {
-          preserve_vdd = true;  // 无法枚举（如锁屏）时保守不放弃
-        }
-        drop_vdd = !preserve_vdd && has_active_physical;
-      }
-#else
-      drop_vdd = session.display_target_override == 0 &&
-                 intent.device_prep == parsed_config_t::device_prep_e::no_operation;
-#endif
-      if (drop_vdd) {
-        BOOST_LOG(info) << "VDD 会话 no_operation：放弃 VDD 目标，直接串流当前活动显示器";
-        intent.target = display_intent_t::target_e::physical;
-        return intent;
-      }
       intent.target = display_intent_t::target_e::vdd;
       return intent;
     }
