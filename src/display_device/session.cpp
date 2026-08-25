@@ -405,9 +405,12 @@ namespace display_device {
     if (config.resolution && config.refresh_rate) {
       const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
       if (!vdd_utils::wait_for_mode_publication(config.device_id, requested_mode)) {
-        BOOST_LOG(error) << "VDD monitor did not publish "
-                         << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate);
-        return vdd_stage_result_e::modes_failed;
+        // 模式未能发布（例如客户端请求了 VDD 驱动不支持的分辨率）不再中止会话：
+        // 记录警告并继续，后续 apply_config 仍会显式设置会话模式；即使最终
+        // 未匹配，编码器也会按 VDD 实际发布的模式捕获（基地版"能串就先串"）。
+        BOOST_LOG(warning) << "VDD monitor did not publish "
+                           << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate)
+                           << "; continuing with whatever mode the VDD publishes";
       }
     }
 
