@@ -405,30 +405,14 @@ namespace display_device {
     if (config.resolution && config.refresh_rate) {
       const display_mode_t requested_mode {*config.resolution, *config.refresh_rate};
       if (!vdd_utils::wait_for_mode_publication(config.device_id, requested_mode)) {
-        // 兜底：VDD 创建后 Windows 可能未将其激活（inactive 显示器不发布模式）。
-        // no_operation/ensure_active 等不设置拓扑的会话依赖 Windows 默认激活；
-        // 发布失败时补一次显式激活（物理主屏 + VDD 副屏扩展）再重试发布。
-        // 正常路径（Windows 已激活）零干预，不改变 no_operation 语义。
+        // 模式未能发布（例如客户端请求了 VDD 驱动不支持的分辨率，或 VDD 未被
+        // Windows 激活）不再中止会话：记录警告并继续，后续 apply_config 仍会
+        // 显式设置会话模式；即使最终未匹配，编码器也会按 VDD 实际发布的模式
+        // 捕获（基地版"能串就先串"）。VDD 的激活形态由 Windows/用户自行决定，
+        // 不在此处强制拓扑；若会话最终失败，VDD 会被保留供用户在显示设置中调整。
         BOOST_LOG(warning) << "VDD monitor did not publish "
                            << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate)
-                           << "; activating the VDD as a secondary display and retrying";
-        if (vdd_utils::apply_vdd_prep(
-              config.device_id,
-              parsed_config_t::vdd_prep_e::vdd_as_secondary,
-              pre_vdd_topology,
-              pre_vdd_devices)) {
-          if (vdd_utils::wait_for_mode_publication(config.device_id, requested_mode)) {
-            BOOST_LOG(info) << "VDD activated as a secondary display and the requested mode was published";
-          }
-          else {
-            BOOST_LOG(warning) << "VDD monitor still did not publish "
-                               << to_string(*config.resolution) << "@" << to_string(*config.refresh_rate)
-                               << "; continuing with whatever mode the VDD publishes";
-          }
-        }
-        else {
-          BOOST_LOG(warning) << "Failed to activate the VDD as a secondary display; continuing with whatever mode the VDD publishes";
-        }
+                           << "; continuing with whatever mode the VDD publishes";
       }
     }
 
@@ -569,7 +553,9 @@ namespace display_device {
         BOOST_LOG(error) << (modes_failed ?
                               "Failed to update the VDD mode list" :
                               "Failed to prepare the VDD device");
-        restore_state_impl(revert_reason_e::config_cleanup);
+        // 模式列表失败时 VDD 已创建：保留设备供用户在 Windows 显示设置中调整，
+        // 而不是直接销毁（创建失败时没有 VDD 可保留）。
+        restore_state_impl(revert_reason_e::config_cleanup, modes_failed);
         return {
           modes_failed ? configure_result_t::result_e::modes_fail : configure_result_t::result_e::vdd_create_failed,
           modes_failed ? "Sunshine could not configure the requested virtual display mode." : "Sunshine could not create the virtual display.",
@@ -691,7 +677,8 @@ namespace display_device {
         pre_saved_initial_topology,
         pending_vdd_.pre_vdd_devices);
       if (vdd_stage_result == vdd_stage_result_e::topology_failed) {
-        restore_state_impl(revert_reason_e::config_cleanup);
+        // 保留已创建的 VDD，供用户在 Windows 显示设置中调整激活形态。
+        restore_state_impl(revert_reason_e::config_cleanup, true);
         return {
           configure_result_t::result_e::topology_fail,
           "Sunshine could not apply the requested virtual display topology.",
@@ -699,8 +686,8 @@ namespace display_device {
         };
       }
       if (vdd_stage_result == vdd_stage_result_e::modes_failed) {
-        BOOST_LOG(warning) << "VDD mode publication failed; cleaning up the prepared VDD state";
-        restore_state_impl(revert_reason_e::config_cleanup);
+        BOOST_LOG(warning) << "VDD mode publication failed; retaining the prepared VDD for manual display adjustment";
+        restore_state_impl(revert_reason_e::config_cleanup, true);
         return {
           configure_result_t::result_e::modes_fail,
           "The virtual display did not publish the requested mode.",
@@ -741,7 +728,7 @@ namespace display_device {
       return configure_result;
     }
 
-    restore_state_impl(revert_reason_e::config_cleanup);
+    restore_state_impl(revert_reason_e::config_cleanup, true);
     return configure_result;
   }
 
@@ -1060,7 +1047,7 @@ namespace display_device {
   }
 
   void
-  session_t::restore_state_impl(revert_reason_e reason) {
+  session_t::restore_state_impl(revert_reason_e reason, bool retain_vdd) {
     // Capture must not retain a probe-owned duplication while the display
     // topology is being restored or its VDD monitor is being destroyed.
     video::discard_prepared_capture_display();
@@ -1070,6 +1057,9 @@ namespace display_device {
     // scoped to the stream that requested HDR on a Zako display.
     platf::vulkan_hdr_bridge::disable();
 #endif
+    if (retain_vdd) {
+      BOOST_LOG(info) << "会话失败，虚拟显示器已保留：可在 Windows 显示设置中调整其激活形态；下次串流将自动复用或重建";
+    }
     // 统一决定 VDD 清理时机：有可恢复拓扑时先恢复物理显示器，再销毁 VDD。
     const auto vdd_id = display_device::find_device_by_friendlyname(ZAKO_NAME);
 
@@ -1083,7 +1073,7 @@ namespace display_device {
     if (!current_use_vdd.has_value()) {
       BOOST_LOG(debug) << " 无会话配置（current_use_vdd=nullopt），仅执行 VDD 清理";
       
-      if (!vdd_id.empty() && !is_keep_enabled) {
+      if (!vdd_id.empty() && !is_keep_enabled && !retain_vdd) {
         if (settings.has_persistent_data()) {
           BOOST_LOG(info) << "非常驻模式，销毁残留 VDD";
         }
@@ -1158,7 +1148,7 @@ namespace display_device {
       has_persistent,
       vdd_is_only_display);
 
-    if (cleanup_timing == vdd_cleanup_timing_e::before_restore) {
+    if (cleanup_timing == vdd_cleanup_timing_e::before_restore && !retain_vdd) {
       destroy_vdd_for_restore(*this, cleanup_timing);
     }
 
@@ -1178,7 +1168,7 @@ namespace display_device {
     const bool vdd_already_handled = true;
     
     if (!settings_will_fail && settings.revert_settings(reason, vdd_already_handled)) {
-      if (cleanup_timing == vdd_cleanup_timing_e::after_restore) {
+      if (cleanup_timing == vdd_cleanup_timing_e::after_restore && !retain_vdd) {
         destroy_vdd_for_restore(*this, cleanup_timing);
       }
       stop_timer_and_clear_vdd_state();
@@ -1191,7 +1181,7 @@ namespace display_device {
       pending_restore_ = true;
       
       // 添加恢复任务（自动处理锁屏检查和立即执行）
-      SessionEventListener::add_unlock_task([this, reason, cleanup_timing]() {
+      SessionEventListener::add_unlock_task([this, reason, cleanup_timing, retain_vdd]() {
         // 快速检查是否还需要恢复（最小化锁持有时间）
         {
           std::lock_guard lock { mutex };
@@ -1205,14 +1195,14 @@ namespace display_device {
         if (settings.is_changing_settings_going_to_fail()) {
           BOOST_LOG(warning) << "CCD API仍不可用，启动轮询机制";
           std::lock_guard lock { mutex };
-          this->start_polling_restore(reason, cleanup_timing);
+          this->start_polling_restore(reason, cleanup_timing, retain_vdd);
           return;
         }
         
         // 执行恢复
         auto result = settings.revert_settings(reason, true);
         BOOST_LOG(info) << "恢复显示设置" << (result ? "成功" : "失败");
-        if (result && cleanup_timing == vdd_cleanup_timing_e::after_restore) {
+        if (result && cleanup_timing == vdd_cleanup_timing_e::after_restore && !retain_vdd) {
           destroy_vdd_for_restore(*this, cleanup_timing);
         }
         
@@ -1227,11 +1217,11 @@ namespace display_device {
   }
 
   void
-  session_t::start_polling_restore(revert_reason_e reason, vdd_cleanup_timing_e cleanup_timing) {
+  session_t::start_polling_restore(revert_reason_e reason, vdd_cleanup_timing_e cleanup_timing, bool retain_vdd) {
     polling_retry_count_.store(0, boost::memory_order_relaxed);  // 重置计数器
     const int max_retries = 20;
 
-    timer->setup_timer([this, reason, cleanup_timing, max_retries]() {
+    timer->setup_timer([this, reason, cleanup_timing, retain_vdd, max_retries]() {
       // 检查是否还需要恢复
       if (!pending_restore_) {
         BOOST_LOG(debug) << "恢复操作已取消，跳过";
@@ -1253,7 +1243,7 @@ namespace display_device {
       // VDD 在恢复成功后再按预定时机清理。
       auto result = settings.revert_settings(reason, true);
       BOOST_LOG(info) << "轮询恢复显示设置" << (result ? "成功" : "失败") << "，不再重试";
-      if (result && cleanup_timing == vdd_cleanup_timing_e::after_restore) {
+      if (result && cleanup_timing == vdd_cleanup_timing_e::after_restore && !retain_vdd) {
         destroy_vdd_for_restore(*this, cleanup_timing);
       }
       pending_restore_ = false;

@@ -304,17 +304,20 @@ namespace display_device {
     /**
      * @brief An implementation of `restore_state` without a mutex lock.
      * @param reason The reason for reverting settings, used to determine appropriate cleanup behavior.
+     * @param retain_vdd When true, the VDD device is kept alive (e.g. after a failed stream
+     *        startup) so the user can adjust it in Windows display settings. Topology, modes
+     *        and HDR are still restored; the VDD is merely not destroyed.
      * @see restore_state for the description.
      */
     void
-    restore_state_impl(revert_reason_e reason = revert_reason_e::stream_ended);
+    restore_state_impl(revert_reason_e reason = revert_reason_e::stream_ended, bool retain_vdd = false);
 
     /**
      * @brief Start polling mechanism as fallback when CCD API is temporarily unavailable.
      * @param reason The reason for reverting settings.
      */
     void
-    start_polling_restore(revert_reason_e reason, vdd_cleanup_timing_e cleanup_timing);
+    start_polling_restore(revert_reason_e reason, vdd_cleanup_timing_e cleanup_timing, bool retain_vdd);
 
     /**
      * @brief 执行依赖可访问交互式 Windows 会话的 VDD 显示操作。
