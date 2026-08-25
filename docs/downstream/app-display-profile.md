@@ -78,6 +78,29 @@ config::video.vdd_reuse ? "shared_vdd" : client_id
 - APP 已指定显示目标时，捕获枚举尚未发布该输出必须限时等待，不能回退到默认物理屏，否则会形成跨适配器捕获与编码错配。
 - 控制连接断开按 APP 策略保持当前显示状态，并保留首次创建 VDD 前的基线供恢复连接使用；明确关闭运行中的 APP 才恢复该基线并清理会话状态。
 
+## 客户端兼容行为矩阵
+
+| 场景 | 行为 |
+| --- | --- |
+| 原版 Moonlight（无扩展参数）| 物理路径，探测自动选择当前活动显示器，串流主屏 |
+| V+ `useVdd=1` + `customScreenMode=0`（no_operation）| 创建 VDD、不设拓扑、注入客户端模式，激活方式由 Windows 默认处理 |
+| V+ `customScreenMode=1~4`（显式布局）| VDD 按所选布局激活（ensure_active/primary/only_display/secondary）|
+| V+ `useVdd=0`（选物理屏）| 物理路径串流主屏 |
+| V+ `display_name` 点名显示器但不存在 | 拒绝回退（基地版语义）|
+| APP 显示方案已配置 | 服务端覆盖客户端目标与布局（优先级：APP > 客户端 > 全局）|
+
+## no_operation 语义（跟随基地版，`33d9aa86` 起）
+
+- VDD 会话 `vdd_prep=no_operation` 时**保持 no_operation**，不做任何回退或强制拓扑。
+- `apply_vdd_display_stage` 跳过拓扑应用（`config.vdd_prep != no_operation` 才调用 `apply_vdd_prep`）；VDD 仍被创建（`should_prepare_vdd = use_vdd`），模式注入与发布流程与基地版一致。
+- 模式发布失败降级为警告继续（`continuing with whatever mode the VDD publishes`，基地版为 `modes_failed` 中止），退出时校正显示状态。
+- 全局 `ensure_active` 映射到 VDD 时也为 no_operation（VDD 创建即激活），同样保持该语义。
+
+## 双显卡适配（GPU 路径切换恢复）
+
+- 面板 GPU 路径切换（会话开始 ~1~6s）导致 VDD 掉出活动拓扑 → 采集丢失。
+- 恢复：3s 早重断言拓扑 → 按 `current_vdd_mode` 重应用会话模式 → 主屏模式校验修复（历史身份回退 + 快照校验，详见 `project-handoff.md`）。
+
 ## 验证范围
 
 - 无 APP 方案时保留客户端显示请求。

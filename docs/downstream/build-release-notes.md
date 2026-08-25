@@ -37,6 +37,25 @@ C:\msys64\ucrt64\bin\c++.exe
 - 如果 PowerShell 找不到 `ninja`，使用完整路径，或从 `MSYS2 UCRT64` 终端运行。
 - MSYS2 更新后不要继续复用旧构建目录；工具链、Boost 或 CMake 发生变化时，重新配置一个新的 `build-*` 目录。
 
+### 构建脚本运行前提（踩坑记录）
+
+- **Node.js 必须 >= 26.7 且 < 27**（`.node-version` 指定；vite 8 需要 MSVC 构建的 Node）。系统 Node 版本不符时，把便携版目录前置到 PATH：
+  ```powershell
+  $env:PATH = 'E:\...\node-v26.7.0-win-x64;' + $env:PATH
+  ```
+- **cargo 必须在 PATH**（`C:\Users\<user>\.cargo\bin`，rustup 默认），否则脚本直接 `throw 'Rust Cargo is required...'`（控制面板 src-tauri 需要）。
+- **必须用 PowerShell 5.1 包装运行脚本**：PS7 的 `$PSNativeCommandUseErrorActionPreference` 会把 npm 的 stderr 警告当作 NativeCommandError 导致误报失败：
+  ```powershell
+  & 'C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe' -NoProfile -ExecutionPolicy Bypass -File scripts\build-app-display-package.ps1 -BuildAlias C:\CodexSunshineAppDisplay -BuildDirectory build-package-current -PublisherName cainiao524
+  ```
+- **必须设 `NO_PROXY=127.0.0.1,localhost,::1`**：否则 reqwest 继承代理环境变量会破坏控制面板的 `proxy_server` 测试（`proxy_retries_with_refreshed_target_when_port_changes` 502 失败）。
+- **PowerShell 直跑 ninja 会静默失败**（GCC 无诊断、退出 1），用 msys bash 看真实诊断：
+  ```bash
+  C:\msys64\usr\bin\bash.exe -lc "export PATH=/ucrt64/bin:/usr/bin; cd /c/CodexSunshineAppDisplay; ninja -C build-package-current sunshine -j2"
+  ```
+- 构建结束后的 `exit code: 1` 且日志全绿 = PS7 对 stderr 的误报，不是真失败；以四件套产物与 `Sunshine Version: <提交>` 头部为准。
+- 驱动依赖（ZakoVDD/vmouse/nefcon）和 Boost FetchContent 在 `build-package-current/_deps` 有缓存；首次构建仍需网络（npm registry / crates.io 可直连，GitHub 需代理）。
+
 ### 中文路径和异常编译退出
 
 仓库路径包含中文时，GCC/`cc1plus` 可能只返回退出码 `1`，不输出有效诊断，并留下 `0` 字节临时汇编文件。这种现象不能当作源码错误继续盲目修改。
@@ -73,10 +92,10 @@ git diff --check
 gh workflow run main.yml `
   -R cainiao524/foundation-sunshine-AppDisplayProfile `
   --ref feature/app-display-profile `
-  -f build-version=v1.0.4 `
+  -f build-version=v2.0 `
   -f publish-release=true `
-  -f release-tag=v1.0.4 `
-  -f release-name=v1.0.4 `
+  -f release-tag=v2.0 `
+  -f release-name="Sunshine App Display Profile v2.0" `
   -f source-ref=feature/app-display-profile
 ```
 

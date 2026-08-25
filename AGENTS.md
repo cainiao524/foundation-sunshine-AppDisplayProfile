@@ -22,6 +22,9 @@
 - `ensure_primary` 必须保持 VDD 为主屏、物理显示器为活动副屏；断开恢复以创建 VDD 前的物理拓扑为准。
 - `ensure_only_display` 只保留目标 VDD；不得用修改 `Desktop` 默认行为来规避显示切换问题。
 - VDD 身份固定使用基地版原生规则 `config::video.vdd_reuse ? "shared_vdd" : client_id`，不得按 APP 生成新身份。
+- VDD 会话遇到 `no_operation` 时全面跟随基地版语义（`33d9aa86` 起）：创建 VDD 但不强制拓扑，激活方式由 Windows 默认处理；模式发布失败降级为警告继续（不中止会话），退出时校正显示状态。
+- 未配置 APP 方案的入口需兼容 Moonlight V+ 扩展参数：`useVdd`、`customScreenMode`（0=no_operation、1=ensure_active、2=ensure_primary、3=ensure_only_display、4=ensure_secondary）、`resolutionScale`、`display_name`；原版 Moonlight（无扩展参数）按基地版路径处理。优先级：APP 配置 > 客户端显式请求 > 全局配置。
+- 双显卡笔记本（dGPU+iGPU）会话开始后约 1~6 秒会发生面板 GPU 路径切换，导致 VDD 掉出活动拓扑、采集丢失；恢复机制 = 会话启动约 3 秒主动重断言拓扑 + 重应用会话模式 + 主屏模式校验修复，断流窗口控制在数秒内。
 
 ## 分支与安全边界
 
