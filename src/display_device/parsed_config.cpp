@@ -537,6 +537,12 @@ namespace display_device {
 
       switch (static_cast<device_prep_e>(session.custom_screen_mode)) {
         case device_prep_e::no_operation:
+          // Moonlight V+ 的"无操作"语义 = 客户端不指定显示操作，跟随本体（全局）
+          // 设置，而不是 no_operation（什么都不做）。全局为 no_operation 时由
+          // resolve_display_intent 的放弃逻辑（串流当前活动显示器）兜底。
+          BOOST_LOG(debug) << "客户端屏幕模式为无操作，跟随全局显示设置: "sv
+                           << static_cast<int>(configured);
+          return configured;
         case device_prep_e::ensure_active:
         case device_prep_e::ensure_primary:
         case device_prep_e::ensure_only_display:
