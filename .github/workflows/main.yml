@@ -36,6 +36,11 @@ on:
         description: '需要检出、测试和打包的精确提交或引用'
         required: true
         type: string
+      prerelease:
+        description: '标记为预发布（true）或正式发布（false）'
+        required: false
+        default: false
+        type: boolean
   workflow_dispatch:
     inputs:
       build-version:
@@ -59,6 +64,11 @@ on:
         description: '需要检出、测试和打包的精确提交或引用；留空时使用当前提交'
         required: false
         type: string
+      prerelease:
+        description: '标记为预发布（true）或正式发布（false）'
+        required: false
+        default: false
+        type: boolean
 
 permissions:
   contents: read
@@ -80,6 +90,7 @@ jobs:
       release_commit: ${{ steps.setup_build_auto.outputs.release_commit || steps.setup_release_manual.outputs.release_commit }}
       release_name: ${{ steps.setup_build_auto.outputs.release_name || steps.setup_release_manual.outputs.release_name }}
       release_tag: ${{ steps.setup_build_auto.outputs.release_tag || steps.setup_release_manual.outputs.release_tag }}
+      release_prerelease: ${{ steps.setup_build_auto.outputs.release_prerelease || steps.setup_release_manual.outputs.release_prerelease }}
     permissions:
       contents: read
     runs-on: ubuntu-latest
@@ -97,6 +108,7 @@ jobs:
           echo "release_commit=${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
           echo "release_name=${VERSION}" >> "$GITHUB_OUTPUT"
           echo "release_tag=${VERSION}" >> "$GITHUB_OUTPUT"
+          echo "release_prerelease=false" >> "$GITHUB_OUTPUT"
 
       - name: Setup Release (Manual)
         id: setup_release_manual
@@ -108,6 +120,7 @@ jobs:
           REQUESTED_TAG: ${{ inputs['release-tag'] }}
           REQUESTED_VERSION: ${{ inputs['build-version'] }}
           REQUESTED_SOURCE_REF: ${{ inputs['source-ref'] }}
+          REQUESTED_PRERELEASE: ${{ inputs['prerelease'] }}
         run: |
           SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
           if [ -n "$REQUESTED_VERSION" ]; then
@@ -140,6 +153,7 @@ jobs:
           echo "release_commit=${SOURCE_REF}" >> $GITHUB_OUTPUT
           echo "release_name=$NAME" >> $GITHUB_OUTPUT
           echo "release_tag=$TAG" >> $GITHUB_OUTPUT
+          echo "release_prerelease=${REQUESTED_PRERELEASE:-false}" >> $GITHUB_OUTPUT
 
   vdd_smoke:
     name: VDD helper smoke tests
@@ -515,6 +529,6 @@ jobs:
           commit: ${{ needs.setup_release.outputs.release_commit }}
           generateReleaseNotes: true
           name: ${{ needs.setup_release.outputs.release_name }}
-          prerelease: false
+          prerelease: ${{ needs.setup_release.outputs.release_prerelease == 'true' }}
           tag: ${{ needs.setup_release.outputs.release_tag }}
           token: ${{ secrets.GITHUB_TOKEN }}
