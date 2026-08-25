@@ -792,19 +792,10 @@ namespace display_device {
       parsed_config.device_prep
     );
 
-    // VDD 会话必须激活虚拟显示器才能发布模式并被捕获。客户端（如 Moonlight V+）
-    // 可能发送 no_operation 显示模式，全局 ensure_active 映射到 VDD 时也是
-    // no_operation；此时回退到全局/APP 配置的拓扑意图，仍为 no_operation 则
-    // 使用安全的 VDD 副屏扩展（物理主屏 + VDD 扩展），避免会话因模式无法发布而中止。
-    if (parsed_config.vdd_prep == parsed_config_t::vdd_prep_e::no_operation) {
-      const auto global_prep = static_cast<parsed_config_t::device_prep_e>(config.display_device_prep);
-      parsed_config.vdd_prep = parsed_config_t::to_vdd_prep(global_prep);
-      if (parsed_config.vdd_prep == parsed_config_t::vdd_prep_e::no_operation) {
-        parsed_config.vdd_prep = parsed_config_t::vdd_prep_e::vdd_as_secondary;
-        parsed_config.device_prep = parsed_config_t::device_prep_e::ensure_secondary;
-      }
-      BOOST_LOG(info) << "VDD 会话拓扑 no_operation 回退为 vdd_prep=" << static_cast<int>(parsed_config.vdd_prep);
-    }
+    // 全面跟随上游（AlkaidLab/foundation-sunshine）实现方案：
+    // no_operation 保持 no_operation —— 创建 VDD 但不设置拓扑，激活方式由
+    // Windows 默认处理（apply_vdd_display_stage 会跳过拓扑应用）。这里不做
+    // 任何回退或强制拓扑，模式注入与发布流程与基地版一致。
 
     BOOST_LOG(debug) << "VDD模式：统一值 " << static_cast<int>(parsed_config.device_prep)
                      << " 映射为 vdd_prep=" << static_cast<int>(parsed_config.vdd_prep);
