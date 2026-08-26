@@ -1041,6 +1041,12 @@ namespace display_device {
     return true;
   }
 
+  bool
+  session_t::is_vdd_session_active() {
+    std::lock_guard lock { mutex };
+    return current_use_vdd.value_or(false) && current_vdd_prep.has_value();
+  }
+
   void
   session_t::reset_persistence() {
     std::lock_guard lock { mutex };

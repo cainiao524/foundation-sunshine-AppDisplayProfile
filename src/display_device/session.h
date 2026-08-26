@@ -181,6 +181,13 @@ namespace display_device {
     reassert_vdd_session_topology();
 
     /**
+     * @brief Check whether the current display session is VDD-backed.
+     * @returns True when the active session configuration uses VDD.
+     */
+    bool
+    is_vdd_session_active();
+
+    /**
      * @brief Reset the persistence and currently held initial display state.
      *
      * This is normally used to get out of the "broken" state where the algorithm wants

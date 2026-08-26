@@ -48,6 +48,11 @@ namespace nvhttp::stream_start {
       std::string detail;
     };
 
+    struct vdd_probe_recovery_budget_t {
+      static constexpr int max_reasserts = 2;
+      int reassert_count = 0;
+    };
+
     video::probe_target_t
     make_probe_target(const display_device::display_intent_t &intent) {
       if (intent.target == display_device::display_intent_t::target_e::physical &&
@@ -75,6 +80,28 @@ namespace nvhttp::stream_start {
       return intent.target == display_device::display_intent_t::target_e::vdd ?
                make_vdd_probe_target() :
                original_target;
+    }
+
+    int
+    probe_encoders_with_vdd_recovery(
+      const video::probe_target_t &target,
+      vdd_probe_recovery_budget_t &budget) {
+      auto result = video::probe_encoders(target);
+      while (result &&
+             target.policy == video::probe_target_policy_e::vdd_compatible &&
+             video::last_encoder_probe_result.error == video::probe_error_e::no_active_display &&
+             budget.reassert_count < vdd_probe_recovery_budget_t::max_reasserts) {
+        ++budget.reassert_count;
+        BOOST_LOG(info) << "Exact VDD encoder probe could not open its output; re-asserting the session topology"
+                        << " [attempt=" << budget.reassert_count << '/'
+                        << vdd_probe_recovery_budget_t::max_reasserts << ']';
+        if (!display_device::session_t::get().reassert_vdd_session_topology()) {
+          BOOST_LOG(warning) << "VDD encoder probe recovery stopped because the topology re-assert did not complete";
+          break;
+        }
+        result = video::probe_encoders(target);
+      }
+      return result;
     }
 
     class temporary_video_config_t {
@@ -211,6 +238,7 @@ namespace nvhttp::stream_start {
       auto_recovery_result_t &recovery_result,
       const video::probe_target_t &probe_target,
       bool &probe_matches_display_state,
+      vdd_probe_recovery_budget_t &vdd_probe_recovery_budget,
       bool refresh_vdd_probe_target = false,
       const display_device::display_intent_t *resolved_intent = nullptr) {
       using result_e = display_device::session_t::configure_result_t::result_e;
@@ -251,7 +279,7 @@ namespace nvhttp::stream_start {
         hdr::adopt_vdd_calibration_if_needed(launch_session);
 
         const auto target = refresh_vdd_probe_target ? make_vdd_probe_target() : probe_target;
-        const auto probe_result = video::probe_encoders(target);
+        const auto probe_result = probe_encoders_with_vdd_recovery(target, vdd_probe_recovery_budget);
         probe_matches_display_state = true;
         if (!probe_result) {
           recovery_result.succeeded = true;
@@ -448,7 +476,8 @@ namespace nvhttp::stream_start {
     try_current_display(
       const display_device::session_t::configure_result_t &display_result,
       auto_recovery_result_t &recovery_result,
-      const video::probe_target_t &probe_target) {
+      const video::probe_target_t &probe_target,
+      vdd_probe_recovery_budget_t &vdd_probe_recovery_budget) {
       recovery_result = {
         true,
         false,
@@ -457,7 +486,7 @@ namespace nvhttp::stream_start {
       };
 
       BOOST_LOG(warning) << "Display configuration failed; continuing with current display settings if encoder probing succeeds";
-      if (!video::probe_encoders(probe_target)) {
+      if (!probe_encoders_with_vdd_recovery(probe_target, vdd_probe_recovery_budget)) {
         recovery_result.succeeded = true;
         recovery_result.detail = "Encoder probing succeeded with the current display settings.";
         return true;
@@ -480,7 +509,8 @@ namespace nvhttp::stream_start {
       rtsp_stream::launch_session_t &launch_session,
       bool is_reconfigure,
       display_device::session_t::configure_result_t &display_result,
-      auto_recovery_result_t &recovery_result) {
+      auto_recovery_result_t &recovery_result,
+      vdd_probe_recovery_budget_t &vdd_probe_recovery_budget) {
       recovery_result = {
         true,
         false,
@@ -504,6 +534,7 @@ namespace nvhttp::stream_start {
               deferred_recovery_result,
               make_vdd_probe_target(),
               probe_matches_display_state,
+              vdd_probe_recovery_budget,
               true)) {
           commit_vdd_recovery_to_launch_session(launch_session, recovery_session);
           recovery_result.succeeded = true;
@@ -538,7 +569,7 @@ namespace nvhttp::stream_start {
       }
       hdr::adopt_vdd_calibration_if_needed(recovery_session);
 
-      if (!video::probe_encoders(make_vdd_probe_target())) {
+      if (!probe_encoders_with_vdd_recovery(make_vdd_probe_target(), vdd_probe_recovery_budget)) {
         commit_vdd_recovery_to_launch_session(launch_session, recovery_session);
         recovery_result.succeeded = true;
         recovery_result.detail = "A VDD-backed display became available and encoder probing succeeded.";
@@ -567,20 +598,27 @@ namespace nvhttp::stream_start {
       bool is_reconfigure,
       display_device::session_t::configure_result_t &display_result,
       auto_recovery_result_t &recovery_result,
-      bool &display_recovery_attempted) {
+      bool &display_recovery_attempted,
+      vdd_probe_recovery_budget_t &vdd_probe_recovery_budget) {
       const auto try_current = [&] {
         display_recovery_attempted = true;
         return try_current_display(
           display_result,
           recovery_result,
-          make_configured_probe_target(intent, make_probe_target(intent)));
+          make_configured_probe_target(intent, make_probe_target(intent)),
+          vdd_probe_recovery_budget);
       };
       const auto try_vdd = [&] {
         if (!vdd_fallback_allowed(intent, launch_session)) {
           return false;
         }
         display_recovery_attempted = true;
-        return try_vdd_display(launch_session, is_reconfigure, display_result, recovery_result);
+        return try_vdd_display(
+          launch_session,
+          is_reconfigure,
+          display_result,
+          recovery_result,
+          vdd_probe_recovery_budget);
       };
 
       if (no_display_to_capture) {
@@ -608,7 +646,8 @@ namespace nvhttp::stream_start {
     bool
     recover_with_temporary_encoder_config(
       auto_recovery_result_t &recovery_result,
-      const video::probe_target_t &probe_target) {
+      const video::probe_target_t &probe_target,
+      vdd_probe_recovery_budget_t &vdd_probe_recovery_budget) {
       const auto probe_error = video::last_encoder_probe_result.error;
       if (probe_error != video::probe_error_e::configured_encoder_unavailable &&
           probe_error != video::probe_error_e::codec_requirements_unmet) {
@@ -639,7 +678,7 @@ namespace nvhttp::stream_start {
 
       {
         temporary_video_config_t temporary_config { std::move(fallback_config) };
-        if (!video::probe_encoders(probe_target)) {
+        if (!probe_encoders_with_vdd_recovery(probe_target, vdd_probe_recovery_budget)) {
           recovery_result.succeeded = true;
           recovery_result.detail = "Temporary encoder fallback succeeded without changing the saved configuration.";
           BOOST_LOG(info) << "Recovered stream startup using " << recovery_result.action;
@@ -703,6 +742,7 @@ namespace nvhttp::stream_start {
       hdr::adopt_vdd_calibration_if_needed(launch_session);
     }
     auto_recovery_result_t recovery_result;
+    vdd_probe_recovery_budget_t vdd_probe_recovery_budget;
     const auto probe_target = make_probe_target(intent);
     bool probe_matches_display_state = false;
 
@@ -717,7 +757,9 @@ namespace nvhttp::stream_start {
       outcome == configure_outcome_e::ok || outcome == configure_outcome_e::retry_later;
     if (initial_state_can_be_probed) {
       const auto configured_probe_target = make_configured_probe_target(intent, probe_target);
-      const auto probe_result = video::probe_encoders(configured_probe_target);
+      const auto probe_result = probe_encoders_with_vdd_recovery(
+        configured_probe_target,
+        vdd_probe_recovery_budget);
       probe_matches_display_state = true;
       if (!probe_result) {
         return true;
@@ -730,6 +772,7 @@ namespace nvhttp::stream_start {
             recovery_result,
             probe_target,
             probe_matches_display_state,
+            vdd_probe_recovery_budget,
             intent.target == display_device::display_intent_t::target_e::vdd,
             &intent)) {
         set_auto_recovery_status(tree, recovery_result);
@@ -760,7 +803,8 @@ namespace nvhttp::stream_start {
           is_reconfigure,
           display_result,
           recovery_result,
-          display_recovery_attempted)) {
+          display_recovery_attempted,
+          vdd_probe_recovery_budget)) {
       set_auto_recovery_status(tree, recovery_result);
       return true;
     }
@@ -769,7 +813,8 @@ namespace nvhttp::stream_start {
     if (!display_recovery_attempted && probe_matches_display_state &&
         recover_with_temporary_encoder_config(
           encoder_recovery_result,
-          make_configured_probe_target(intent, probe_target))) {
+          make_configured_probe_target(intent, probe_target),
+          vdd_probe_recovery_budget)) {
       set_auto_recovery_status(tree, encoder_recovery_result);
       return true;
     }

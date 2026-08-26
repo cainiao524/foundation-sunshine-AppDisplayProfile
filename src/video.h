@@ -612,7 +612,9 @@ namespace video {
     bool expect_failure,
     const std::optional<std::string> &probe_capture_override,
     const std::string &probe_display_name,
-    std::shared_ptr<platf::display_t> *retained_display = nullptr);
+    std::shared_ptr<platf::display_t> *retained_display = nullptr,
+    bool *display_creation_failed = nullptr,
+    bool *display_creation_succeeded = nullptr);
 
   /**
    * @brief Probe encoders and select the preferred encoder.

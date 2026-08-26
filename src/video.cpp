@@ -1847,6 +1847,103 @@ namespace video {
     constexpr auto explicit_display_ready_timeout = 8s;
     constexpr auto explicit_display_retry_interval = 100ms;
 
+    enum class capture_error_recovery_e {
+      terminate,
+      retry_same_display,
+      reinitialize,
+    };
+
+    class vdd_capture_recovery_state_t {
+    public:
+      bool
+      has_reassert_budget() const {
+        return topology_reassert_count_ < max_topology_reasserts;
+      }
+
+      bool
+      consume_early_reassert_suppression() {
+        return std::exchange(suppress_next_early_reassert_, false);
+      }
+
+      void
+      reset_capture_error_sequence() {
+        failed_display_ = nullptr;
+        consecutive_capture_errors_ = 0;
+      }
+
+      bool
+      attempt_topology_reassert(
+        std::string_view context,
+        std::string_view reason,
+        bool suppress_next_early_reassert = false) {
+        if (!has_reassert_budget()) {
+          return false;
+        }
+
+        ++topology_reassert_count_;
+        suppress_next_early_reassert_ = suppress_next_early_reassert_ || suppress_next_early_reassert;
+        BOOST_LOG(info) << "Re-asserting the session VDD topology after " << reason
+                        << " [context=" << context
+                        << ", attempt=" << topology_reassert_count_ << '/' << max_topology_reasserts << ']';
+#ifdef _WIN32
+        if (!display_device::session_t::get().reassert_vdd_session_topology()) {
+          BOOST_LOG(warning) << "Session VDD topology re-assert did not complete"
+                             << " [context=" << context << ']';
+        }
+#endif
+        return true;
+      }
+
+      capture_error_recovery_e
+      handle_capture_error(
+        const std::shared_ptr<platf::display_t> &display,
+        bool explicit_target,
+        std::string_view context) {
+#ifdef _WIN32
+        const bool active_vdd_session = display_device::session_t::get().is_vdd_session_active();
+#else
+        const bool active_vdd_session = false;
+#endif
+        if (!explicit_target || !active_vdd_session || !display) {
+          reset_capture_error_sequence();
+          return capture_error_recovery_e::terminate;
+        }
+
+        if (failed_display_ == display.get()) {
+          ++consecutive_capture_errors_;
+        }
+        else {
+          failed_display_ = display.get();
+          consecutive_capture_errors_ = 1;
+        }
+
+        if (consecutive_capture_errors_ == 1) {
+          BOOST_LOG(warning) << "Exact VDD capture returned an error; retrying the same display once"
+                             << " [context=" << context << ']';
+          return capture_error_recovery_e::retry_same_display;
+        }
+
+        reset_capture_error_sequence();
+        if (!attempt_topology_reassert(
+              context,
+              "two consecutive capture errors",
+              true)) {
+          BOOST_LOG(error) << "Exact VDD capture recovery budget is exhausted"
+                           << " [context=" << context << ']';
+          return capture_error_recovery_e::terminate;
+        }
+
+        return capture_error_recovery_e::reinitialize;
+      }
+
+    private:
+      static constexpr int max_topology_reasserts = 2;
+      int topology_reassert_count_ = 0;
+      platf::display_t *failed_display_ = nullptr;
+      int consecutive_capture_errors_ = 0;
+      bool suppress_next_early_reassert_ = false;
+    };
+
     std::string
     resolve_requested_display_name(const std::string &requested_display_name) {
       auto resolved_display_name = display_device::get_display_name(requested_display_name);
@@ -1879,14 +1976,15 @@ namespace video {
       const config_t &config,
       std::string &target_display_name,
       const std::function<bool()> &keep_waiting,
-      std::string_view context) {
+      std::string_view context,
+      vdd_capture_recovery_state_t &recovery_state) {
       const bool explicit_target = !config.display_name.empty();
       auto deadline = std::chrono::steady_clock::now() + explicit_display_ready_timeout;
       bool waiting_logged = false;
-      int topology_reassert_count = 0;
       std::optional<std::chrono::steady_clock::time_point> first_failure_time;
-      constexpr int max_topology_reasserts = 2;
       constexpr auto early_reassert_delay = 3s;
+      const bool suppress_early_reassert = recovery_state.consume_early_reassert_suppression();
+      bool early_reassert_used = suppress_early_reassert;
 
       while (keep_waiting()) {
         std::string resolved_display_name;
@@ -1924,6 +2022,7 @@ namespace video {
             reset_display(disp, dev_type, target_display_name, config, explicit_target ? 1 : 2);
           }
           if (disp) {
+            recovery_state.reset_capture_error_sequence();
             if (explicit_target) {
               BOOST_LOG(info) << "Using client-specified display: " << target_display_name;
             }
@@ -1951,15 +2050,13 @@ namespace video {
           // VDD 拓扑：首次在 ~3 秒后提前尝试（若路径切换已完成可大幅缩短
           // 断流窗口），随后在完整超时点再兜底一次；仍失败才放弃。
           const bool early_reassert_due =
-            topology_reassert_count == 0 &&
+            !early_reassert_used &&
             now >= *first_failure_time + early_reassert_delay;
-          if (topology_reassert_count < max_topology_reasserts && (now >= deadline || early_reassert_due)) {
-            ++topology_reassert_count;
-            BOOST_LOG(info) << "Exact capture target did not become ready; re-asserting the session VDD topology [context=" << context
-                            << ", attempt=" << topology_reassert_count << '/' << max_topology_reasserts << ']';
-#ifdef _WIN32
-            display_device::session_t::get().reassert_vdd_session_topology();
-#endif
+          if (recovery_state.has_reassert_budget() && (now >= deadline || early_reassert_due)) {
+            early_reassert_used = early_reassert_used || early_reassert_due;
+            recovery_state.attempt_topology_reassert(
+              context,
+              early_reassert_due ? "an exact capture target readiness delay" : "an exact capture target readiness timeout");
             deadline = std::chrono::steady_clock::now() + explicit_display_ready_timeout;
             first_failure_time.reset();
             continue;
@@ -2033,6 +2130,7 @@ namespace video {
     std::string target_display_name;
     const auto &config = capture_ctxs.front().config;
     std::shared_ptr<platf::display_t> disp;
+    vdd_capture_recovery_state_t recovery_state;
     if (!acquire_capture_display(
           disp,
           encoder.platform_formats->dev_type,
@@ -2041,7 +2139,8 @@ namespace video {
           config,
           target_display_name,
           [&capture_ctx_queue]() { return capture_ctx_queue->running(); },
-          "initial")) {
+          "initial",
+          recovery_state)) {
       return;
     }
     active_display_event->raise(target_display_name);
@@ -2222,6 +2321,19 @@ namespace video {
         artificial_reinit = false;
       }
 
+      if (status == platf::capture_e::error) {
+        const auto recovery = recovery_state.handle_capture_error(
+          disp,
+          !capture_ctxs.empty() && !capture_ctxs.front().config.display_name.empty(),
+          "asynchronous");
+        if (recovery == capture_error_recovery_e::retry_same_display) {
+          continue;
+        }
+        if (recovery == capture_error_recovery_e::reinitialize) {
+          status = platf::capture_e::reinit;
+        }
+      }
+
       switch (status) {
         case platf::capture_e::reinit: {
           reinit_event.raise(true);
@@ -2293,7 +2405,8 @@ namespace video {
                        config,
                        target_display_name,
                        [&capture_ctx_queue]() { return capture_ctx_queue->running(); },
-                       "reinitialize")) {
+                       "reinitialize",
+                       recovery_state)) {
               if (!capture_ctx_queue->running()) {
                 return;
               }
@@ -3702,7 +3815,8 @@ namespace video {
     std::vector<std::unique_ptr<sync_session_ctx_t>> &synced_session_ctxs,
     encode_session_ctx_queue_t &encode_session_ctx_queue,
     std::vector<std::string> &display_names,
-    int &display_p) {
+    int &display_p,
+    vdd_capture_recovery_state_t &recovery_state) {
     const auto &encoder = *chosen_encoder;
 
     std::shared_ptr<platf::display_t> disp;
@@ -3748,7 +3862,8 @@ namespace video {
                  config,
                  target_display_name,
                  [&encode_session_ctx_queue]() { return encode_session_ctx_queue.running(); },
-                 "synchronous")) {
+                 "synchronous",
+                 recovery_state)) {
         if (!encode_session_ctx_queue.running()) {
           return encode_e::ok;
         }
@@ -3881,6 +3996,18 @@ namespace video {
       };
 
       auto status = disp->capture(push_captured_image_callback, pull_free_image_callback, &display_cursor);
+      if (ec == platf::capture_e::ok && status == platf::capture_e::error) {
+        const auto recovery = recovery_state.handle_capture_error(
+          disp,
+          !synced_session_ctxs.empty() && !synced_session_ctxs.front()->config.display_name.empty(),
+          "synchronous");
+        if (recovery == capture_error_recovery_e::retry_same_display) {
+          continue;
+        }
+        if (recovery == capture_error_recovery_e::reinitialize) {
+          return encode_e::reinit;
+        }
+      }
       switch (status) {
         case platf::capture_e::reinit:
         case platf::capture_e::error:
@@ -3920,7 +4047,8 @@ namespace video {
 
     std::vector<std::string> display_names;
     int display_p = -1;
-    while (encode_run_sync(synced_session_ctxs, ctx, display_names, display_p) == encode_e::reinit) {}
+    vdd_capture_recovery_state_t recovery_state;
+    while (encode_run_sync(synced_session_ctxs, ctx, display_names, display_p, recovery_state) == encode_e::reinit) {}
   }
 
   void
@@ -4260,7 +4388,9 @@ namespace video {
     bool expect_failure,
     const std::optional<std::string> &probe_capture_override,
     const std::string &probe_display_name,
-    std::shared_ptr<platf::display_t> *retained_display) {
+    std::shared_ptr<platf::display_t> *retained_display,
+    bool *display_creation_failed,
+    bool *display_creation_succeeded) {
     std::shared_ptr<platf::display_t> disp;
     if (retained_display) {
       retained_display->reset();
@@ -4309,7 +4439,13 @@ namespace video {
     // If the encoder isn't supported at all (not even H.264), bail early
     reset_display(disp, encoder.platform_formats->dev_type, probe_display_name, config_autoselect);
     if (!disp) {
+      if (display_creation_failed) {
+        *display_creation_failed = true;
+      }
       return false;
+    }
+    if (display_creation_succeeded) {
+      *display_creation_succeeded = true;
     }
 #ifdef _WIN32
     if (retained_display && is_reusable_vdd_probe_display(disp) &&
@@ -4465,7 +4601,13 @@ namespace video {
 #endif
         }
         if (!disp) {
+          if (display_creation_failed) {
+            *display_creation_failed = true;
+          }
           return false;
+        }
+        if (display_creation_succeeded) {
+          *display_creation_succeeded = true;
         }
 
         auto test_hdr_and_yuv444 = [&](auto &flag_map, int video_format) {
@@ -4563,6 +4705,8 @@ namespace video {
     }
     auto probe_display_name = configured_display_name;
     const bool target_is_vdd = target && target->policy == probe_target_policy_e::vdd_compatible;
+    bool target_display_creation_failed = false;
+    bool target_display_creation_succeeded = false;
     if (probe_capture_override && !target_is_vdd) {
       // The Windows implementation enumerates all DXGI capture-ready outputs
       // regardless of memory type, so one pass serves every encoder candidate.
@@ -4672,7 +4816,9 @@ namespace video {
                 previous_encoder && previous_encoder != encoder,
                 probe_capture_override,
                 probe_display_name,
-                retained_display)) {
+                retained_display,
+                &target_display_creation_failed,
+                &target_display_creation_succeeded)) {
             pos = encoder_list.erase(pos);
             break;
           }
@@ -4705,7 +4851,9 @@ namespace video {
               previous_encoder && previous_encoder != encoder,
               probe_capture_override,
               probe_display_name,
-              retained_display)) {
+              retained_display,
+              &target_display_creation_failed,
+              &target_display_creation_succeeded)) {
           pos = encoder_list.erase(pos);
           continue;
         }
@@ -4747,7 +4895,9 @@ namespace video {
               previous_encoder && previous_encoder != encoder,
               probe_capture_override,
               probe_display_name,
-              retained_display)) {
+              retained_display,
+              &target_display_creation_failed,
+              &target_display_creation_succeeded)) {
           pos = encoder_list.erase(pos);
           continue;
         }
@@ -4763,7 +4913,14 @@ namespace video {
     if (chosen_encoder == nullptr) {
       const auto output_display_name { display_device::get_display_name(configured_output_name) };
       BOOST_LOG(error) << "Unable to find display or encoder during startup."sv;
-      if (!config::video.encoder.empty()) {
+      if (target_is_vdd && target_display_creation_failed && !target_display_creation_succeeded) {
+        last_encoder_probe_result = {
+          probe_error_e::no_active_display,
+          "The requested VDD could not be opened by the encoder probe capture backend.",
+          "Wait for the virtual display to become capture-ready, then try again."
+        };
+      }
+      else if (!config::video.encoder.empty()) {
         last_encoder_probe_result = {
           probe_error_e::configured_encoder_unavailable,
           "The configured video encoder is not available on this system.",
