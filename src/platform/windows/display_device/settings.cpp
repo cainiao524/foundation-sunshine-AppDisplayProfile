@@ -905,11 +905,16 @@ namespace display_device {
         }
       }
 
-      const bool modified_topology_valid = is_topology_valid(data.topology.modified);
+      const bool modified_topology_valid = !data.topology.modified.empty() && is_topology_valid(data.topology.modified);
       const bool initial_topology_valid = is_topology_valid(data.topology.initial);
-      const bool have_changes_for_modified_topology = !data.original_primary_display.empty() ||
-                                                      !data.original_modes.empty() ||
-                                                      !data.original_hdr_states.empty();
+      // display_off（仅保留 VDD）会话的 modified 拓扑只含 VDD，恢复时移除 VDD 后
+      // 会变为空；此时没有"修改后的拓扑"需要撤销，直接恢复 initial 物理拓扑即可。
+      // 空 modified 不应被判为 invalid 而中止整个恢复（否则物理拓扑已恢复仍报失败，
+      // 状态残留并污染下一次会话）。
+      const bool have_changes_for_modified_topology = !data.topology.modified.empty() &&
+                                                      (!data.original_primary_display.empty() ||
+                                                       !data.original_modes.empty() ||
+                                                       !data.original_hdr_states.empty());
 
       std::unordered_set<std::string> newly_enabled_devices;
       auto current_topology = get_current_topology();
