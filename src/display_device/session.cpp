@@ -764,8 +764,10 @@ namespace display_device {
     const vdd_utils::VddSettings &vdd_settings,
     const std::string &vdd_device_id) {
     if (!config.resolution || !config.refresh_rate) {
-      BOOST_LOG(debug) << "VDD session mode update skipped: resolution or refresh rate is not set";
-      return vdd_mode_update_e::failed;
+      // 会话没有请求特定分辨率/刷新率（如 resume 请求不带 mode）：
+      // 无需更新 VDD 模式表，VDD 继续使用当前模式，不视为失败。
+      BOOST_LOG(info) << "VDD session mode is not set; keeping the current VDD mode list";
+      return vdd_mode_update_e::ready;
     }
 
     const auto new_setting = to_string(*config.resolution) + "@" + to_string(*config.refresh_rate);
@@ -799,6 +801,12 @@ namespace display_device {
         BOOST_LOG(error) << "VDD SETMODES IOCTL failed for " << new_setting;
         return vdd_mode_update_e::failed;
       case vdd_utils::set_vdd_result::invalid_config:
+        // 会话没有请求分辨率/刷新率时无需更新模式表（VDD 用当前模式）；
+        // 确实有值但无效（如驱动拒绝的模式）才视为失败。
+        if (!config.resolution || !config.refresh_rate) {
+          BOOST_LOG(info) << "VDD session mode is not set; keeping the current VDD mode list";
+          return vdd_mode_update_e::ready;
+        }
         BOOST_LOG(error) << "VDD session mode is invalid: " << new_setting;
         return vdd_mode_update_e::failed;
       case vdd_utils::set_vdd_result::interface_missing:

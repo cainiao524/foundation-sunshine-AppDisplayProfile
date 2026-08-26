@@ -193,11 +193,17 @@ namespace display_device {
             BOOST_LOG(warning) << "奇怪的分辨率增加了...";
             parsed_config.resolution = boost::none;
           }
-          else if (session.width >= 0 && session.height >= 0) {
+          else if (session.width > 0 && session.height > 0) {
             parsed_config.resolution = resolution_t {
               static_cast<unsigned int>(session.width),
               static_cast<unsigned int>(session.height)
             };
+          }
+          else if (session.width == 0 || session.height == 0) {
+            // 客户端未提供分辨率（如 resume 请求不带 mode 时默认 0x0x0）：
+            // 保持当前分辨率，不把 0x0 当作有效模式下发。
+            BOOST_LOG(debug) << "Client did not provide a resolution; keeping the current resolution";
+            parsed_config.resolution = boost::none;
           }
           else {
             BOOST_LOG(error) << "Resolution provided by client session config is invalid: " << session.width << "x" << session.height;
@@ -254,8 +260,14 @@ namespace display_device {
         session.refresh_rate_change_override >= 0 ? session.refresh_rate_change_override : config.refresh_rate_change) };
       switch (refresh_rate_option) {
         case parsed_config_t::refresh_rate_change_e::automatic: {
-          if (session.fps >= 0) {
+          if (session.fps > 0) {
             parsed_config.refresh_rate = refresh_rate_t { static_cast<unsigned int>(session.fps), 1 };
+          }
+          else if (session.fps == 0) {
+            // 客户端未提供刷新率（如 resume 请求不带 mode 时默认 0x0x0）：
+            // 保持当前刷新率，不把 0Hz 当作有效模式下发。
+            BOOST_LOG(debug) << "Client did not provide a refresh rate; keeping the current refresh rate";
+            parsed_config.refresh_rate = boost::none;
           }
           else {
             BOOST_LOG(error) << "FPS value provided by client session config is invalid: " << session.fps;
