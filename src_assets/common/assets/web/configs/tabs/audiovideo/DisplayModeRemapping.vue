@@ -178,14 +178,10 @@ function addRemapping() {
 }
 
 .display-mode-remapping summary::after {
-  content: '';
-  flex-shrink: 0;
   margin-left: auto;
-  width: 1.25rem;
-  height: 1.25rem;
-  background-image: var(--bs-accordion-btn-icon);
-  background-repeat: no-repeat;
-  background-size: 1.25rem;
+  font-family: 'Font Awesome 7 Free';
+  font-weight: 900;
+  content: '\f078';
   transition: transform 0.2s ease;
 }
 
