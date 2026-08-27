@@ -84,7 +84,7 @@ const selectedPhysicalDevice = computed(() => {
     <select :id="isAppContext ? 'app_output_name' : 'output_name'" class="form-select" v-model="outputName">
       <template v-if="isAppContext">
         <option value="__inherit__">{{ $t("apps.display_profile_inherit") }}</option>
-        <option v-if="outputName === '__physical__'" value="__physical__">
+        <option value="__physical__">
           {{ $t("apps.display_profile_physical") }}
         </option>
       </template>
