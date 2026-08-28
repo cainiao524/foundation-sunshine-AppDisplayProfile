@@ -255,7 +255,7 @@ jobs:
           $url = "https://jrsoftware.org/download.php/is.exe"
           $installer = "$env:TEMP\innosetup.exe"
           Invoke-WebRequest -Uri $url -OutFile $installer
-          Start-Process -FilePath $installer -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait
+          Start-Process -FilePath $installer -WorkingDirectory $env:TEMP -ArgumentList '/VERYSILENT /SUPPRESSMSGBOXES /NORESTART /SP-' -Wait
 
       - name: Add Inno Setup to PATH
         shell: pwsh
