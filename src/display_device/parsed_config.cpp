@@ -582,9 +582,17 @@ namespace display_device {
     }
     else if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
       if (std::string client_display_name = it->to_string(); !client_display_name.empty()) {
-        device_id = std::move(client_display_name);
-        client_named_it = true;
-        BOOST_LOG(debug) << "使用客户端指定的显示器: "sv << device_id;
+        if (session.display_target_override == 0) {
+          // Force a physical display: ignore a client-cached display name
+          // (e.g. a stale VDD id from an earlier session) and fall back to
+          // the current primary display, resolved at runtime.
+          BOOST_LOG(debug) << "忽略客户端指定的显示器（强制使用物理显示器）: "sv << client_display_name;
+        }
+        else {
+          device_id = std::move(client_display_name);
+          client_named_it = true;
+          BOOST_LOG(debug) << "使用客户端指定的显示器: "sv << device_id;
+        }
       }
     }
 

@@ -247,6 +247,9 @@ Source: "{#MySourceDir}\scripts\vdd-device-helper.ps1"; DestDir: "{app}\scripts"
 Source: "{#MySourceDir}\scripts\uninstall-vdd.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\driver\*"; DestDir: "{app}\scripts\driver"; Flags: ignoreversion recursesubdirs
 
+; Vulkan HDR bridge tools (registered only while an HDR VDD session is active)
+Source: "{#MySourceDir}\tools\vulkan_hdr\*"; DestDir: "{app}\tools\vulkan_hdr"; Flags: ignoreversion recursesubdirs skipifsourcedoesntexist; Components: vdd
+
 ; Gamepad scripts
 Source: "{#MySourceDir}\scripts\install-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
 Source: "{#MySourceDir}\scripts\uninstall-gamepad.bat"; DestDir: "{app}\scripts"; Flags: ignoreversion
