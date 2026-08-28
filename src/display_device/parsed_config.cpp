@@ -566,7 +566,12 @@ namespace display_device {
     // The client may pick a display for its own stream; otherwise the host config decides.
     std::string device_id = config.output_name;
 #ifdef _WIN32
-    if (session.display_target_override == 0 && device_id == VDD_NAME) {
+    if (session.display_target_override == 0 && !device_id.empty()) {
+      // Force a physical display: ignore any global output selection (VDD or
+      // a specific physical display) and fall back to the current primary
+      // display, which is resolved at runtime and immune to dual-GPU panel
+      // path changes. A per-app explicit display (app_display_output_name_override)
+      // or a client-named display is applied after this and stays untouched.
       device_id.clear();
     }
 #endif
