@@ -28,6 +28,7 @@ extern "C" {
 #include "clipboard_bridge.h"
 #include "config.h"
 #include "cursor_channel.h"
+#include "display_device/parsed_config.h"
 #include "globals.h"
 #include "input.h"
 #include "logging.h"
@@ -1533,7 +1534,21 @@ namespace rtsp_stream {
       configuredBitrateKbps = getArg("x-ml-video.configuredBitrateKbps"sv);
 
       // Set display_name from session environment or use global configuration
-      if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
+      // 强制物理显示器（APP 显示方案 target=0）的会话：捕获目标必须跟随解析后的
+      // 显示意图。resolve_display_intent 已统一处理应用显式显示器、双显卡面板
+      // GPU 路径切换（按物理身份映射到在线路径）和"目标不存在→回退运行时主屏"；
+      // 直接使用客户端/应用缓存的旧显示器 ID（如已销毁的 VDD 或旧 GPU 路径 ID）
+      // 会让捕获端空等旧 ID、重断言后仍失败（"跟踪不到真实屏幕"）。
+      if (session.display_target_override == 0) {
+        const auto intent = display_device::resolve_display_intent(config::video, session);
+        if (intent.target == display_device::display_intent_t::target_e::physical) {
+          monitor.display_name = intent.device_id;
+        }
+        if (!monitor.display_name.empty()) {
+          BOOST_LOG(info) << "Session using specified display: " << monitor.display_name;
+        }
+      }
+      else if (auto it = session.env.find("SUNSHINE_CLIENT_DISPLAY_NAME"); it != session.env.end()) {
         monitor.display_name = it->to_string();
         BOOST_LOG(info) << "Session using specified display: " << monitor.display_name;
       }

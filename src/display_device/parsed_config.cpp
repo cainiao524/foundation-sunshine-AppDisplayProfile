@@ -1,5 +1,6 @@
 // standard includes
 #include <algorithm>
+#include <unordered_set>
 
 // lib includes
 #include <boost/algorithm/string.hpp>
@@ -15,6 +16,11 @@
 #include "src/logging.h"
 #include "src/rtsp.h"
 #include "to_string.h"
+
+#ifdef _WIN32
+#include "src/platform/windows/display_device/settings_topology.h"
+#include "src/platform/windows/display_device/windows_utils.h"
+#endif
 
 using namespace std::literals;
 
@@ -621,6 +627,7 @@ namespace display_device {
     bool requested_device_exists = false;
     bool requested_device_is_vdd = false;
 #ifdef _WIN32
+    device_state_e requested_device_state { device_state_e::inactive };
     const auto available_devices = enum_available_devices_checked();
     if (!available_devices) {
       // A locked desktop and other transient CCD failures do not prove that a
@@ -633,7 +640,43 @@ namespace display_device {
     if (const auto device = available_devices->find(intent.device_id); device != available_devices->end()) {
       requested_device_exists = true;
       requested_device_is_vdd = device->second.friendly_name == ZAKO_NAME;
+      requested_device_state = device->second.device_state;
     }
+
+    // 双显卡笔记本：面板会在 iGPU/dGPU 两条 GPU 路径之间切换，切换后同一块面板
+    // （相同 physical_identity）以不同的设备 ID 出现，旧 ID 可能暂时不在枚举中，
+    // 或仅以 INACTIVE 状态残留。按物理身份把目标映射到当前在线路径，避免回退
+    // 主屏丢失"配置的显示器"语义，也让捕获端能立即锁定正确路径。
+    const auto remap_to_live_twin = [&]() -> std::string {
+      if (intent.device_id.empty()) {
+        return {};
+      }
+
+      const auto historical_identities = w_utils::get_historical_physical_device_identities();
+      const auto historical_it = historical_identities.find(intent.device_id);
+      if (historical_it == historical_identities.end() || historical_it->second.empty()) {
+        return {};
+      }
+
+      const auto current_devices = enum_available_devices();
+      device_identity_map_t active_identities;
+      for (const auto &[device_id, info] : current_devices) {
+        if (info.friendly_name == ZAKO_NAME) {
+          continue;
+        }
+        if (!info.physical_identity.empty() &&
+            (info.device_state == device_state_e::active || info.device_state == device_state_e::primary)) {
+          active_identities.emplace(device_id, info.physical_identity);
+        }
+      }
+
+      const auto remap_result = resolve_device_id_remaps(
+        std::unordered_set<std::string> { intent.device_id },
+        device_identity_map_t { { intent.device_id, historical_it->second } },
+        active_identities);
+      const auto replacement = remap_result.replacements.find(intent.device_id);
+      return replacement == remap_result.replacements.end() ? std::string {} : replacement->second;
+    };
 #else
     requested_device_exists = !find_one_of_the_available_devices(intent.device_id).empty();
 #endif
@@ -643,6 +686,17 @@ namespace display_device {
       return intent;
     }
 
+#ifdef _WIN32
+    // 目标存在但处于非活动状态（面板当前走另一条 GPU 路径）：映射到在线路径。
+    if (requested_device_exists && !client_named_it && requested_device_state == device_state_e::inactive) {
+      if (const auto twin = remap_to_live_twin(); !twin.empty()) {
+        BOOST_LOG(info) << "显示器处于非活动路径，按物理身份映射到在线路径: "sv << intent.device_id << " -> " << twin;
+        intent.device_id = twin;
+        return intent;
+      }
+    }
+#endif
+
     if (!requested_device_exists) {
       if (client_named_it) {
         // The client picked this display for this stream, so quietly streaming a
@@ -651,6 +705,16 @@ namespace display_device {
         intent.target = display_intent_t::target_e::unavailable;
         return intent;
       }
+
+#ifdef _WIN32
+      // 配置的显示器不在当前 GPU 路径的枚举中：若同一块面板在另一条路径上
+      // 在线，映射过去；否则回退到主屏。
+      if (const auto twin = remap_to_live_twin(); !twin.empty()) {
+        BOOST_LOG(info) << "显示器不在当前 GPU 路径上，按物理身份映射到在线路径: "sv << intent.device_id << " -> " << twin;
+        intent.device_id = twin;
+        return intent;
+      }
+#endif
 
       // A stale entry in the host config. Aim at the primary display; whether a
       // virtual display is a better answer is decided during stream startup.
