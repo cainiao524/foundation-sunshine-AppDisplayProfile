@@ -2082,15 +2082,20 @@ namespace stream {
         rtsp_stream::launch_session_t temp_launch_session {};
         temp_launch_session.width = session->config.monitor.width;
         temp_launch_session.height = session->config.monitor.height;
-        temp_launch_session.fps = static_cast<int>(new_fps);
+        // Keep fps at zero while applying the profile so a positive value
+        // unambiguously means that the app configured a fixed refresh rate.
+        temp_launch_session.fps = 0;
         temp_launch_session.enable_hdr = session->enable_hdr;
         temp_launch_session.enable_sops = session->enable_sops;
         temp_launch_session.use_vdd = session->use_vdd;
         temp_launch_session.custom_screen_mode = session->custom_screen_mode;
         proc::proc.apply_app_display_profile(session->app_id, temp_launch_session);
-        const int effective_fps = temp_launch_session.fps > 0 ? temp_launch_session.fps : static_cast<int>(new_fps);
+        const bool fixed_refresh_rate = temp_launch_session.fps > 0;
+        const float effective_fps = fixed_refresh_rate ?
+                                      static_cast<float>(temp_launch_session.fps) :
+                                      new_fps;
 
-        session->config.monitor.framerate = effective_fps;
+        session->config.monitor.framerate = static_cast<int>(effective_fps);
         perf::update_session_display(
           session->launch_session_id,
           session->config.monitor.width,
@@ -2100,12 +2105,12 @@ namespace stream {
         
         video::dynamic_param_t param;
         param.type = video::dynamic_param_type_e::FPS;
-        param.value.float_value = static_cast<float>(effective_fps);
+        param.value.float_value = effective_fps;
         param.valid = true;
         session->video.dynamic_param_change_events->raise(param);
         
         BOOST_LOG(info) << "Dynamic FPS change: " << new_fps << " fps"
-                        << (effective_fps != static_cast<int>(new_fps) ? " (per-app fixed refresh rate applied)" : "");
+                        << (fixed_refresh_rate ? " (per-app fixed refresh rate applied)" : "");
         return;
       }
 

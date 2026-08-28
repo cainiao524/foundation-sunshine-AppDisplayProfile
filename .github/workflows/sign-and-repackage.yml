@@ -166,7 +166,7 @@ jobs:
         shell: msys2 {0}
         env:
           BRANCH: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.ref }}
-          BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}.杂鱼
+          BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
           COMMIT: ${{ steps.source.outputs.commit }}
         run: |
           # add Rust to PATH for Tauri GUI build

@@ -627,7 +627,7 @@ const appRefreshRateRule = computed({
 const displayProfileValid = computed(() => {
   if (!formData.value?.['display-target']) return true
   if (hasFixedResolution.value && !/^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(formData.value['display-resolution'])) return false
-  if (hasFixedRefreshRate.value && !/^[1-9]\d{0,3}(?:\.\d+)?$/.test(formData.value['display-refresh-rate'])) return false
+  if (hasFixedRefreshRate.value && !/^[1-9]\d{0,3}$/.test(formData.value['display-refresh-rate'])) return false
   return true
 })
 // The default-physical-display option cannot override a global virtual

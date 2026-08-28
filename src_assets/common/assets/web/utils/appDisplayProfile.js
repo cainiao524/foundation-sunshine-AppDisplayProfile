@@ -43,7 +43,7 @@ export function normalizeAppDisplayProfile(app) {
   if (normalized['display-resolution'] && !/^[1-9]\d{1,4}x[1-9]\d{1,4}$/.test(normalized['display-resolution'])) {
     normalized['display-resolution'] = ''
   }
-  if (normalized['display-refresh-rate'] && !/^[1-9]\d{0,3}(?:\.\d+)?$/.test(normalized['display-refresh-rate'])) {
+  if (normalized['display-refresh-rate'] && !/^[1-9]\d{0,3}$/.test(normalized['display-refresh-rate'])) {
     normalized['display-refresh-rate'] = ''
   }
   if (!['', 'on', 'off'].includes(normalized['display-hdr'])) {

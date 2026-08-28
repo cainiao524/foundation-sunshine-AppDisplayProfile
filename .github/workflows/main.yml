@@ -167,7 +167,7 @@ jobs:
       - name: Build self-contained DualSense sidecar
         shell: pwsh
         env:
-          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}
         run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
 
       - name: Build Web UI
@@ -196,7 +196,7 @@ jobs:
         shell: msys2 {0}
         env:
           BRANCH: ${{ github.head_ref || github.ref_name }}
-          BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          BUILD_VERSION: ${{ needs.setup_release.outputs.release_tag }}
           COMMIT: ${{ needs.setup_release.outputs.release_commit }}
           GITHUB_TOKEN: ${{ secrets.DRIVER_DOWNLOAD_TOKEN }}
           # ccache.exe is a native binary, so it reads the Windows-style path
@@ -352,7 +352,7 @@ jobs:
           allowUpdates: true
           body: ${{ needs.setup_release.outputs.release_body }}
           generateReleaseNotes: ${{ needs.setup_release.outputs.release_generate_release_notes }}
-          name: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          name: ${{ needs.setup_release.outputs.release_tag }}
           prerelease: true
-          tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
+          tag: ${{ needs.setup_release.outputs.release_tag }}
           token: ${{ secrets.GH_BOT_TOKEN }}

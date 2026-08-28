@@ -684,9 +684,9 @@ namespace display_device {
       // confirmed gone, while retained devices (vdd_keep_enabled or resident
       // in the initial topology) still resolve and keep their records.
       std::unordered_set<std::string> existing_vdd_ids;
-      for (const auto &vdd_id : vdd_device_ids) {
-        if (!get_display_friendly_name(vdd_id).empty()) {
-          existing_vdd_ids.insert(vdd_id);
+      for (const auto &[device_id, device_info] : enum_available_devices()) {
+        if (device_info.friendly_name == ZAKO_NAME) {
+          existing_vdd_ids.insert(device_id);
         }
       }
 

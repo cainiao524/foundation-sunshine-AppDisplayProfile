@@ -224,17 +224,18 @@ namespace proc {
       }
     }
     if (!app.display_refresh_rate.empty()) {
-      try {
-        const int fps = std::stoi(app.display_refresh_rate);
-        if (fps > 0) {
+      int fps = 0;
+      const auto *begin = app.display_refresh_rate.data();
+      const auto *end = begin + app.display_refresh_rate.size();
+      const auto [position, parse_error] = std::from_chars(begin, end, fps);
+      if (parse_error == std::errc {} && position == end && fps > 0) {
           launch_session.fps = fps;
           // The refresh rate automatic branch applies session.fps without
           // consulting enable_sops, so a fixed refresh rate must not flip the
           // shared sops gate: doing so would also make the resolution follow
           // the client, overriding a per-app "no_operation" resolution policy.
-        }
       }
-      catch (...) {
+      else {
         BOOST_LOG(warning) << "Ignoring invalid fixed refresh rate ["sv << app.display_refresh_rate
                            << "] for app ["sv << app.name << ']';
       }
@@ -1059,10 +1060,7 @@ namespace proc {
         else if (display_resolution_mode && *display_resolution_mode == "client"sv) {
           ctx.display_resolution_mode = 1;
         }
-        if (display_refresh_rate_mode && *display_refresh_rate_mode == "no_operation"sv) {
-          ctx.display_refresh_rate_mode = 0;
-        }
-        else if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
+        if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
           ctx.display_refresh_rate_mode = 1;
         }
         ctx.display_output_name = display_output_name.value_or("");

@@ -77,6 +77,16 @@ test('invalid fixed values are cleared', () => {
   assert.equal(normalized['display-refresh-rate'], '')
 })
 
+test('fractional fixed refresh rates are rejected consistently with the native session field', () => {
+  const normalized = normalizeAppDisplayProfile({
+    name: 'Game',
+    'display-target': 'virtual',
+    'display-refresh-rate': '59.94',
+  })
+
+  assert.equal(normalized['display-refresh-rate'], '')
+})
+
 test('fixed values survive when well formed', () => {
   const normalized = normalizeAppDisplayProfile({
     name: 'Game',
