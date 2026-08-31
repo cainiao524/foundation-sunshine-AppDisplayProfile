@@ -239,6 +239,29 @@ jobs:
             $utf8NoBom)
           Write-Host "Pinned upstream DualSense sidecar manifest placed at build/ds5-sidecar-package.json"
 
+      - name: Setup Rust for pinned Control Panel
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-pc-windows-msvc
+
+      - name: Build and test pinned Control Panel
+        shell: pwsh
+        run: |
+          Push-Location .\src_assets\common\sunshine-control-panel
+          try {
+            npm ci
+            npm run build:renderer
+            npm run test:renderer
+            cargo test --release --manifest-path .\src-tauri\Cargo.toml --target x86_64-pc-windows-msvc
+            cargo build --release --manifest-path .\src-tauri\Cargo.toml --target x86_64-pc-windows-msvc
+            if (-not (Test-Path -LiteralPath .\src-tauri\target\x86_64-pc-windows-msvc\release\sunshine-gui.exe -PathType Leaf)) {
+              throw 'Pinned Control Panel build did not produce sunshine-gui.exe.'
+            }
+          }
+          finally {
+            Pop-Location
+          }
+
       - name: Build Web UI
         shell: pwsh
         run: |
@@ -292,6 +315,8 @@ jobs:
             -DBUILD_TESTS=ON \
             -DBUILD_TRAY_TESTS=ON \
             -DBUILD_WEB_UI=OFF \
+            -DFETCH_GUI=OFF \
+            -DSUNSHINE_PREFER_LOCAL_GUI=ON \
             -DCMAKE_C_COMPILER_LAUNCHER=ccache \
             -DCMAKE_CXX_COMPILER_LAUNCHER=ccache \
             -DSUNSHINE_ASSETS_DIR=assets \
@@ -362,6 +387,14 @@ jobs:
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
 
+          # Keep the optional DualSense runtime available as a manual download
+          # asset on this release. It is the same upstream stable release
+          # artifact that the embedded manifest points to, so the digest and
+          # download URL stay consistent with the installed control panel.
+          curl -fL --retry 3 -o ../artifacts/Sunshine.Ds5Sidecar.x64.zip \
+            "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v2026.823.92127.%E6%9D%82%E9%B1%BC/Sunshine.Ds5Sidecar.x64.zip"
+          cp ../build/ds5-sidecar-package.json ../artifacts/Sunshine.Ds5Sidecar.manifest.json
+
       - name: Rename release assets
         shell: msys2 {0}
         run: |
@@ -406,6 +439,8 @@ jobs:
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
             artifacts/Sunshine.*.Portable-x64.zip
+            artifacts/Sunshine.Ds5Sidecar.x64.zip
+            artifacts/Sunshine.Ds5Sidecar.manifest.json
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
           if-no-files-found: error
