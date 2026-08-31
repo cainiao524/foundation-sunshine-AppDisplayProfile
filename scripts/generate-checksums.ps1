@@ -29,8 +29,6 @@ foreach ($package in $packages) {
     Write-Host "Computing: $($package.Name)..." -ForegroundColor Yellow
     
     $hash = Get-FileHash -Path $package.FullName -Algorithm SHA256
-    $relativePath = Resolve-Path -Path $package.FullName -Relative
-    
     $checksums += [PSCustomObject]@{
         Hash = $hash.Hash
         File = $package.Name
@@ -41,7 +39,7 @@ foreach ($package in $packages) {
 # Create output content
 $content = @"
 # Sunshine Release Package Checksums
-# Generated: $(Get-Date -Format "yyyy-MM-dd HH:mm:ss UTC")
+# Generated: $([DateTime]::UtcNow.ToString("yyyy-MM-dd HH:mm:ss 'UTC'"))
 # Algorithm: SHA256
 
 Verify your downloads with:
