@@ -15,6 +15,29 @@ on:
     branches:
       - master
   workflow_dispatch:
+    inputs:
+      build-version:
+        description: '用于产物文件名的版本标识；留空时使用手动构建时间'
+        required: false
+        type: string
+      publish-release:
+        description: '构建成功后创建新的正式发布页'
+        required: false
+        default: false
+        type: boolean
+      release-tag:
+        description: '新发布使用的标签；禁止与现有标签重复'
+        required: false
+        type: string
+      release-name:
+        description: '新发布页面显示的名称'
+        required: false
+        type: string
+      prerelease:
+        description: '标记为预发布（true）或正式发布（false）'
+        required: false
+        default: false
+        type: boolean
 
 concurrency:
   group: '${{ github.workflow }}-${{ github.ref }}'
@@ -52,14 +75,42 @@ jobs:
       - name: Setup Release (Manual)
         id: setup_release_manual
         if: github.event_name == 'workflow_dispatch'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          PUBLISH_RELEASE: ${{ inputs['publish-release'] }}
+          REQUESTED_NAME: ${{ inputs['release-name'] }}
+          REQUESTED_TAG: ${{ inputs['release-tag'] }}
+          REQUESTED_VERSION: ${{ inputs['build-version'] }}
+          REQUESTED_PRERELEASE: ${{ inputs['prerelease'] }}
         run: |
           SUFFIX=$([ "${{ github.ref_name }}" = "master" ] && echo "" || echo "-dev")
-          echo "publish_release=false" >> $GITHUB_OUTPUT
+          if [ -n "$REQUESTED_VERSION" ]; then
+            VERSION="$REQUESTED_VERSION"
+          else
+            VERSION="manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}"
+          fi
+          TAG="${REQUESTED_TAG:-$VERSION}"
+          NAME="${REQUESTED_NAME:-$TAG}"
+          if [ "$PUBLISH_RELEASE" = "true" ]; then
+            if [ -z "$REQUESTED_TAG" ]; then
+              echo '::error::正式发布必须显式填写 release-tag。'
+              exit 1
+            fi
+            if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::error::标签 ${TAG} 已存在，禁止覆盖。"
+              exit 1
+            fi
+            if gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${TAG}" >/dev/null 2>&1; then
+              echo "::error::发布 ${TAG} 已存在，禁止覆盖。"
+              exit 1
+            fi
+          fi
+          echo "publish_release=${PUBLISH_RELEASE}" >> $GITHUB_OUTPUT
           echo "release_body=Manual build (${{ github.ref_name }})" >> $GITHUB_OUTPUT
           echo "release_commit=${{ github.sha }}" >> $GITHUB_OUTPUT
           echo "release_generate_release_notes=false" >> $GITHUB_OUTPUT
-          echo "release_tag=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
-          echo "release_version=manual-$(date +%Y%m%d-%H%M%S)${SUFFIX}" >> $GITHUB_OUTPUT
+          echo "release_tag=${TAG}" >> $GITHUB_OUTPUT
+          echo "release_version=${VERSION}" >> $GITHUB_OUTPUT
 
   vdd_smoke:
     name: VDD helper smoke tests
@@ -159,16 +210,34 @@ jobs:
           cache: npm
           cache-dependency-path: package-lock.json
 
-      - name: Setup .NET for DualSense sidecar
-        uses: actions/setup-dotnet@v6
-        with:
-          dotnet-version: '10.0.x'
-
-      - name: Build self-contained DualSense sidecar
+      - name: Place pinned upstream DualSense sidecar manifest
         shell: pwsh
-        env:
-          RELEASE_TAG: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-        run: .\scripts\build-ds5-sidecar.ps1 -ReleaseTag $env:RELEASE_TAG
+        run: |
+          # This fork tracks the upstream stable release baseline, so the
+          # optional DualSense runtime is downloaded from the upstream stable
+          # release asset. Embedding the pinned upstream manifest keeps the
+          # control panel whitelist (AlkaidLab/foundation-sunshine only)
+          # working without any client-side changes.
+          $manifest = @'
+          {
+            "schema": 1,
+            "component_version": "1.2.0",
+            "protocol": 1,
+            "target": "win-x64-self-contained",
+            "license": "GPL-3.0-only",
+            "asset_name": "Sunshine.Ds5Sidecar.x64.zip",
+            "download_url": "https://github.com/AlkaidLab/foundation-sunshine/releases/download/v2026.823.92127.%E6%9D%82%E9%B1%BC/Sunshine.Ds5Sidecar.x64.zip",
+            "sha256": "2c4e9d7545c40d01b0dc6a289f26139717f7413aca111b592a131e72770e760f",
+            "size": 43915719
+          }
+          '@
+          New-Item -ItemType Directory -Force -Path build | Out-Null
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::WriteAllText(
+            (Join-Path (Resolve-Path build) 'ds5-sidecar-package.json'),
+            $manifest.Trim() + [Environment]::NewLine,
+            $utf8NoBom)
+          Write-Host "Pinned upstream DualSense sidecar manifest placed at build/ds5-sidecar-package.json"
 
       - name: Build Web UI
         shell: pwsh
@@ -292,8 +361,6 @@ jobs:
           # move
           mv ./cpack_artifacts/Sunshine.exe ../artifacts/sunshine-windows-installer.exe
           mv ./cpack_artifacts/Sunshine.zip ../artifacts/sunshine-windows-portable.zip
-          cp ./ds5-sidecar-package/Sunshine.Ds5Sidecar.x64.zip ../artifacts/
-          cp ./ds5-sidecar-package.json ../artifacts/Sunshine.Ds5Sidecar.manifest.json
 
       - name: Rename release assets
         shell: msys2 {0}
@@ -339,8 +406,6 @@ jobs:
           path: |
             artifacts/Sunshine.*.WindowsInstaller.exe
             artifacts/Sunshine.*.Portable-x64.zip
-            artifacts/Sunshine.Ds5Sidecar.x64.zip
-            artifacts/Sunshine.Ds5Sidecar.manifest.json
             artifacts/SHA256SUMS.txt
             artifacts/checksums.json
           if-no-files-found: error
@@ -349,10 +414,10 @@ jobs:
         if: needs.setup_release.outputs.publish_release == 'true'
         uses: LizardByte/create-release-action@v2025.426.1549
         with:
-          allowUpdates: true
+          allowUpdates: false
           body: ${{ needs.setup_release.outputs.release_body }}
           generateReleaseNotes: ${{ needs.setup_release.outputs.release_generate_release_notes }}
-          name: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-          prerelease: true
-          tag: ${{ needs.setup_release.outputs.release_tag }}.杂鱼
-          token: ${{ secrets.GH_BOT_TOKEN }}
+          name: ${{ inputs['release-name'] }}
+          prerelease: ${{ inputs['prerelease'] == 'true' }}
+          tag: ${{ needs.setup_release.outputs.release_tag }}
+          token: ${{ secrets.GITHUB_TOKEN }}
