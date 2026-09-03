@@ -195,12 +195,13 @@ namespace proc {
       launch_session.custom_screen_mode = app.display_device_prep;
     }
 
-    // 3. Resolution / refresh rate policy.
+    // 3. Resolution policy.
     //    no_operation -> ignore client requests (keep the host mode) by
     //    gating "Optimize game settings" off. automatic -> follow the client:
     //    leave sops untouched (the base build auto-enables it; vanilla honors
-    //    the client setting).
-    if (app.display_resolution_mode == 0 || app.display_refresh_rate_mode == 0) {
+    //    the client setting). The refresh rate has no separate per-app gate
+    //    (see the parse side), so only the resolution mode controls sops here.
+    if (app.display_resolution_mode == 0) {
       launch_session.enable_sops = false;
     }
 
@@ -240,10 +241,9 @@ namespace proc {
       }
     }
 
-    // 5. Advanced: fixed HDR state. Overrides the client hdrMode request;
-    //    takes effect when the global "HDR state change" is automatic (the
-    //    default), otherwise the global no_operation gate keeps the host
-    //    state untouched.
+    // 5. Advanced: fixed HDR state. Overrides the client hdrMode request.
+    //    The base build keeps the host HDR state handling automatic for VDD
+    //    sessions, so this assignment is what the display preparation sees.
     if (app.display_hdr >= 0) {
       launch_session.enable_hdr = app.display_hdr != 0;
     }
@@ -1059,12 +1059,15 @@ namespace proc {
         else if (display_resolution_mode && *display_resolution_mode == "client"sv) {
           ctx.display_resolution_mode = 1;
         }
-        if (display_refresh_rate_mode && *display_refresh_rate_mode == "no_operation"sv) {
-          ctx.display_refresh_rate_mode = 0;
-        }
-        else if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
+        if (display_refresh_rate_mode && *display_refresh_rate_mode == "client"sv) {
           ctx.display_refresh_rate_mode = 1;
         }
+        // The refresh rate has no per-app "ignore client" gate in the 0-change
+        // design (upstream applies the client fps unconditionally in the
+        // automatic branch). A stored no_operation would silently do nothing
+        // while also disabling the shared sops gate for the resolution, so it
+        // is intentionally not mapped here (matches the editor, which only
+        // offers inherit / follow client and drops no_operation on save).
         ctx.display_output_name = display_output_name.value_or("");
         ctx.display_resolution = display_resolution.value_or("");
         ctx.display_refresh_rate = display_refresh_rate.value_or("");

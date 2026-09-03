@@ -87,12 +87,12 @@ namespace proc {
      */
     int display_target {-1};          ///< -1=inherit, 0=physical, 1=virtual
     int display_device_prep {-1};     ///< -1=inherit, 0=no_operation, 1=ensure_active, 2=ensure_primary, 3=ensure_only_display, 4=ensure_secondary
-    int display_resolution_mode {-1}; ///< -1=inherit, 0=no_operation (ignore client), 1=automatic (follow client)
-    int display_refresh_rate_mode {-1}; ///< -1=inherit, 0=no_operation (ignore client), 1=automatic (follow client)
+    int display_resolution_mode {-1}; ///< -1=inherit, 0=no_operation (ignore client), 1=client (follow client, stored as "client")
+    int display_refresh_rate_mode {-1}; ///< -1=inherit, 1=client (follow client, stored as "client"); no per-app no_operation gate (see process.cpp)
     std::string display_output_name;  ///< Physical display device id used when display_target=physical; empty = default physical display
     std::string display_resolution;   ///< Fixed resolution "WxH" (advanced option); empty = not set
     std::string display_refresh_rate; ///< Fixed refresh rate in Hz (advanced option); empty = not set
-    int display_hdr {-1};             ///< -1=inherit, 0=force off, 1=force on (advanced option)
+    int display_hdr {-1};             ///< -1=inherit, 0=force off, 1=force on (advanced option); always overrides the client hdrMode when set
   };
 
   class proc_t {

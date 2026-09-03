@@ -1925,12 +1925,6 @@ namespace stream {
       temp_launch_session.reported_hdr_capabilities.sdr_white_nits = dynamic_sdr_white_nits;
       temp_launch_session.hdr_target_source = session->hdr_target_source;
 
-      // Re-apply the per-app display scheme before deciding anything, so the
-      // resolution policy (fixed values / no_operation) governs the dynamic
-      // request and the reconfiguration keeps the app profile instead of the
-      // plain session copy.
-      proc::proc.apply_app_display_profile(session->app_id, temp_launch_session);
-
       bool active_display_resolved = true;
       const auto active_display_event = mail::man->event<std::string>(mail::active_display);
       const auto active_display = active_display_event->view(std::chrono::milliseconds {0});
@@ -1958,6 +1952,13 @@ namespace stream {
           temp_launch_session.env["SUNSHINE_CLIENT_DISPLAY_NAME"] = target_display;
         }
       }
+
+      // Re-apply the per-app display scheme after the active-display copy so
+      // an app-configured target/layout takes precedence over the session's
+      // current capture display. Without the app scheme this is a no-op, and
+      // the resolution policy (fixed values / no_operation) below still
+      // governs the dynamic request.
+      proc::proc.apply_app_display_profile(session->app_id, temp_launch_session);
 
       // Decide the effective resolution from the applied per-app scheme:
       // - no_operation (sops off and no fixed override): reject the request;
