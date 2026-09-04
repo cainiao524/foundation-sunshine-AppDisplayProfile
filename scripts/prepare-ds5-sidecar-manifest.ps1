@@ -63,7 +63,16 @@ function Get-AssetSha256([object]$Asset) {
 }
 
 $releaseTagFile = Resolve-RepositoryPath $ReleaseTagPath 'Upstream release state file'
+# The pinned control panel moved the DualSense sidecar constants from the
+# single dualsense.rs module into dualsense/mod.rs. Probe the new layout
+# first and fall back to the legacy file so both pins keep working.
 $controlPanelSourceFile = Resolve-RepositoryPath $ControlPanelSourcePath 'Control Panel source file'
+if (-not (Test-Path -LiteralPath $controlPanelSourceFile -PathType Leaf)) {
+  $moduleSource = Join-Path (Split-Path -Parent $controlPanelSourceFile) 'dualsense/mod.rs'
+  if (Test-Path -LiteralPath $moduleSource -PathType Leaf) {
+    $controlPanelSourceFile = $moduleSource
+  }
+}
 $outputFile = Resolve-RepositoryPath $OutputPath 'Manifest output path'
 
 if (-not (Test-Path -LiteralPath $releaseTagFile -PathType Leaf)) {
