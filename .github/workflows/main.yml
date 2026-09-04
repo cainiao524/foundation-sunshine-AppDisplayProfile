@@ -373,22 +373,27 @@ jobs:
         uses: actions/cache@v6
         with:
           path: C:\Program Files (x86)\Inno Setup 6
-          key: inno-setup-6
+          key: inno-setup-6.7.3
 
       - name: Install Inno Setup
         if: steps.inno-cache.outputs.cache-hit != 'true'
         shell: pwsh
         run: |
-          # Download the current Inno Setup 6 release from the official site,
-          # matching the upstream workflow so compiler updates are picked up
-          # automatically.
-          $url = "https://jrsoftware.org/download.php/is.exe"
+          # TEMP (v3.0.1 only): pinned GitHub Release download with digest
+          # check. jrsoftware.org has repeatedly timed out from this repo's
+          # runners; revisit following upstream (scheme B) afterwards.
+          $url = "https://github.com/jrsoftware/issrc/releases/download/is-6_7_3/innosetup-6.7.3.exe"
+          $expectedSha256 = '9c73c3bae7ed48d44112a0f48e66742c00090bdb5bef71d9d3c056c66e97b732'
           $installer = "$env:TEMP\innosetup.exe"
           $installed = $false
           for ($attempt = 1; $attempt -le 3; $attempt++) {
             try {
               Remove-Item -LiteralPath $installer -Force -ErrorAction SilentlyContinue
               Invoke-WebRequest -Uri $url -OutFile $installer -MaximumRetryCount 3 -RetryIntervalSec 5
+              $actualSha256 = (Get-FileHash -LiteralPath $installer -Algorithm SHA256).Hash.ToLowerInvariant()
+              if ($actualSha256 -ne $expectedSha256) {
+                throw "Inno Setup SHA-256 mismatch: $actualSha256"
+              }
               $bytes = [System.IO.File]::ReadAllBytes($installer)
               if ($bytes.Length -lt 1MB -or $bytes[0] -ne 0x4D -or $bytes[1] -ne 0x5A) {
                 throw 'Downloaded Inno Setup installer is not a valid Windows executable.'
