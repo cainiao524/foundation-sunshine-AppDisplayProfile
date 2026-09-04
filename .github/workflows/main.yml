@@ -279,12 +279,21 @@ jobs:
             # The upstream GUI tray build requires the native stylus plugin
             # next to sunshine-gui.exe. Build it into the same target/release
             # directory so cmake's SUNSHINE_PREFER_LOCAL_GUI probe finds both.
+            # cargo names the cdylib after [lib] name (underscores); the GUI
+            # and cmake expect the hyphenated asset name, so rename it.
             cargo build --release --manifest-path .\native-plugins\stylus\Cargo.toml `
               --target x86_64-pc-windows-msvc `
               --target-dir .\src-tauri\target
             $stylusDll = '.\src-tauri\target\x86_64-pc-windows-msvc\release\alkaidlab-plugin-stylus.dll'
             if (-not (Test-Path -LiteralPath $stylusDll -PathType Leaf)) {
-              throw 'Pinned Control Panel stylus plugin build did not produce alkaidlab-plugin-stylus.dll.'
+              $underscoreDll = '.\src-tauri\target\x86_64-pc-windows-msvc\release\alkaidlab_plugin_stylus.dll'
+              if (-not (Test-Path -LiteralPath $underscoreDll -PathType Leaf)) {
+                throw 'Pinned Control Panel stylus plugin build did not produce alkaidlab-plugin-stylus.dll.'
+              }
+              Move-Item -LiteralPath $underscoreDll -Destination $stylusDll
+            }
+            if (-not (Test-Path -LiteralPath $stylusDll -PathType Leaf)) {
+              throw 'Pinned Control Panel stylus plugin dll is missing after rename.'
             }
           }
           finally {
