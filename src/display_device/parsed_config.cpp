@@ -479,7 +479,10 @@ namespace display_device {
       const auto hdr_prep_option { static_cast<parsed_config_t::hdr_prep_e>(config.hdr_prep) };
       switch (hdr_prep_option) {
         case parsed_config_t::hdr_prep_e::automatic:
-          return session.enable_hdr;
+          // An SDR-to-HDR pre-encode filter needs the source desktop to stay
+          // SDR even though the client-facing stream is HDR. This decision is
+          // made during display preparation, before capture is constructed.
+          return display_prepared_for_hdr(config, session);
         case parsed_config_t::hdr_prep_e::no_operation:
         default:
           return boost::none;
@@ -533,6 +536,22 @@ namespace display_device {
       }
     }
   }  // namespace
+
+  bool
+  display_prepared_for_hdr(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+    if (session.frame_pipeline_policy_resolved) {
+      switch (session.frame_pipeline_policy.source_display) {
+        case platf::source_display_intent_e::require_hdr:
+          return true;
+        case platf::source_display_intent_e::require_sdr:
+          return false;
+        case platf::source_display_intent_e::unchanged:
+        default:
+          break;
+      }
+    }
+    return session.enable_hdr && !session.synthetic_hdr.enabled;
+  }
 
   display_intent_t
   resolve_display_intent(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
@@ -704,7 +723,7 @@ namespace display_device {
   }
 
   boost::optional<parsed_config_t>
-  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session) {
+  make_parsed_config(const config::video_t &config, const rtsp_stream::launch_session_t &session, bool is_reconfigure) {
     parsed_config_t parsed_config;
 
     // 显示器目标、是否为VDD、以及device_prep统一在此解析
@@ -717,10 +736,13 @@ namespace display_device {
     parsed_config.device_prep = intent.device_prep;
     parsed_config.change_hdr_state = parse_hdr_option(config, session);
 
+    // Resume 的任意零值模式都不能用于显示配置；保持现有分辨率和刷新率。
+    const bool resume_mode_invalid = !is_reconfigure && (session.width <= 0 || session.height <= 0 || session.fps <= 0);
     // 解析分辨率和刷新率配置
-    if (!parse_resolution_option(config, session, parsed_config) ||
-        !parse_refresh_rate_option(config, session, parsed_config) ||
-        !remap_display_modes_if_needed(config, session, parsed_config)) {
+    if (!resume_mode_invalid &&
+        (!parse_resolution_option(config, session, parsed_config) ||
+         !parse_refresh_rate_option(config, session, parsed_config) ||
+         !remap_display_modes_if_needed(config, session, parsed_config))) {
       // 任何一步失败都返回空值
       return boost::none;
     }

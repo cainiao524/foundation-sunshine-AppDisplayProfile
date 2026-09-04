@@ -25,6 +25,7 @@
 // local includes
 #include "src/config.h"
 #include "src/logging.h"
+#include "src/platform/frame_contract.h"
 #include "src/thread_safe.h"
 #include "src/utility.h"
 #include "src/video_colorspace.h"
@@ -476,6 +477,7 @@ namespace platf {
 
     std::optional<std::chrono::steady_clock::time_point> frame_timestamp;
     std::optional<frame_pipeline_trace_t> pipeline_trace;
+    captured_frame_desc_t frame_desc;
 
     virtual ~img_t() = default;
   };
@@ -522,6 +524,12 @@ namespace platf {
     /// and the histogram is point-sampled per analysis cell. Zero alongside a nonzero
     /// avg_maxrgb means the analyzer did not produce one, which HDR Vivid rejects.
     float avg_maxrgb_pq = 0.0f;
+    /// First percentile and near-black coverage from the analyzer's PQ histogram.
+    /// `near_black_fraction` is the fraction in histogram bin zero (PQ < 1/256).
+    /// The validity bit distinguishes an older analyzer from a genuinely black frame.
+    float percentile_1_pq = 0.0f;
+    float near_black_fraction = 0.0f;
+    bool near_black_stats_valid = false;
     float percentile_10_pq = 0.0f;  ///< 10th percentile in normalized PQ signal space
     float percentile_90_pq = 0.0f;  ///< 90th percentile in normalized PQ signal space
     /// 99th percentile of maxRGB (nits). Reported as the HDR10+ maxSCL; see
@@ -540,7 +548,7 @@ namespace platf {
     virtual int
     convert(platf::img_t &img) = 0;
 
-    // Optional: supported HLG converters can apply this at a frame boundary.
+    // Optional: supported HDR converters can apply this at a frame boundary.
     virtual void
     set_client_sdr_white_nits(float) {
     }
@@ -704,6 +712,17 @@ namespace platf {
       return false;
     }
 
+    /**
+     * @brief Whether this capture/display path can run the configured pre-encode
+     *        filter. Sessions on paths returning false must disable the filter
+     *        (and re-resolve the frame pipeline policy) instead of signalling
+     *        HDR output no filter produces.
+     */
+    virtual bool
+    supports_pre_encode_filter() {
+      return false;
+    }
+
     virtual bool
     get_hdr_metadata(SS_HDR_METADATA &metadata) {
       std::memset(&metadata, 0, sizeof(metadata));
@@ -765,7 +784,8 @@ namespace platf {
      * @brief Write mono 48 kHz signed 16-bit PCM to the virtual microphone device.
      * @param samples Pointer to the PCM samples.
      * @param frame_count Number of mono frames to write.
-     * @returns Number of bytes written, -1 on a generic error, or -2 when the device was invalidated.
+     * @returns Number of bytes written, 0 when the current frame was dropped due to backpressure,
+     *          -1 on a generic error, or -2 when the active output backend became unavailable.
      */
     virtual int
     write_mic_pcm(const std::int16_t *samples, std::size_t frame_count) = 0;

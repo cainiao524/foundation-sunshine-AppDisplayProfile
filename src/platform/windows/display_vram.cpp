@@ -26,6 +26,7 @@ extern "C" {
 #include "display_cursor.h"
 #include "display_vram_internal.h"
 #include "misc.h"
+#include "pre_encode_filter.h"
 #include "src/config.h"
 #include "src/logging.h"
 #include "src/nvenc/win/nvenc_dynamic_factory.h"
@@ -293,16 +294,41 @@ namespace platf::dxgi {
   }
 
   class d3d_base_encode_device final {
-    struct alignas(16) HlgDisplayParams {
-      float peakNits;
-      float systemGamma;
+    // GPU contract shared by the PQ/HLG converters and HDR analysis shaders.
+    struct alignas(16) HdrPreEncodeParams {
+      float nominalPeakNits;
+      float hlgSystemGamma;
       // SDR band re-anchoring: gain applied to scRGB levels at or below
-      // sdrBandTopScrgb (Windows SDR white / 80), fading back to 1.0 by 2x.
+      // sdrBandTopScrgb (Windows SDR white / 80), then monotonically fading
+      // back to 1.0 in log-luminance space.
       // gain 1.0 / top 0 leaves the signal untouched.
       float sdrBandGain;
       float sdrBandTopScrgb;
     };
-    static_assert(sizeof(HlgDisplayParams) == 16);
+    static_assert(sizeof(HdrPreEncodeParams) == 16);
+
+    struct HdrPreEncodeState {
+      buf_t constantBuffer;
+      HdrPreEncodeParams params { 0.0f, 1.0f, 1.0f, 0.0f };
+      // Client-reported SDR reference white; 0 = no transform requested.
+      float clientSdrWhiteNits = 0.0f;
+
+      explicit operator bool() const {
+        return bool(constantBuffer);
+      }
+    };
+
+    // Hides whether pass 1 reads a full scRGB frame or converter-produced cell
+    // statistics. Consumers only see the common analysis contract.
+    struct HdrAnalysisSource {
+      ID3D11ShaderResourceView *statistics = nullptr;
+      ID3D11ShaderResourceView *pqAverage = nullptr;
+      ID3D11Buffer *parameters = nullptr;
+
+      explicit operator bool() const {
+        return statistics && parameters;
+      }
+    };
 
     // Must match the AnalysisParams constant buffer in both HDR analysis shaders.
     struct AnalysisParams {
@@ -391,7 +417,6 @@ namespace platf::dxgi {
       auto &img = (img_d3d_t &) img_base;
       if (!img.blank) {
         auto &img_ctx = img_ctx_map[img.id];
-        const bool can_analyze_hdr_frame = hdr_analysis_enabled && img.linear_gamma && img.format == DXGI_FORMAT_R16G16B16A16_FLOAT;
 
         // Open the shared capture texture with our ID3D11Device
         if (initialize_image_context(img, img_ctx)) {
@@ -399,12 +424,10 @@ namespace platf::dxgi {
         }
 
         // Poll the previous analysis result before taking the capture mutex.
-        if (hdr_analysis_pending) {
-          read_hdr_analysis_results();
-          if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
-            runtime_status.scene_metadata_active = true;
-            ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
-          }
+        read_hdr_analysis_results();
+        if (hdr_luminance_stats_out.valid && !runtime_status.scene_metadata_active) {
+          runtime_status.scene_metadata_active = true;
+          ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
         }
 
         // Acquire encoder mutex to synchronize with capture code. Normal
@@ -455,15 +478,84 @@ namespace platf::dxgi {
           gpu_timing->borrowed_vdd = img.borrowed_vdd_texture;
         }
 
+        bool capture_mutex_released = false;
+        auto release_capture_mutex = [&]() -> bool {
+          if (capture_mutex_released) {
+            return true;
+          }
+          bool released = false;
+          if (borrowed_vdd_frame) {
+            released = img.release_borrowed_vdd_after_convert(img_ctx.encoder_mutex.get());
+          }
+          else {
+            released = SUCCEEDED(img_ctx.encoder_mutex->ReleaseSync(encoder_release_key));
+          }
+          capture_mutex_released = released;
+          return released;
+        };
+
+        ID3D11Texture2D *conversion_input_texture = img_ctx.encoder_texture.get();
+        ID3D11ShaderResourceView *conversion_input_srv = img_ctx.encoder_input_res.get();
+        DXGI_FORMAT conversion_input_format = img.format;
+        auto conversion_input_semantic = img.frame_desc;
+
+        if (pre_encode_filter) {
+          auto source_contract = display->capture_contract;
+          source_contract.require_private_handoff = false;
+          if (!frame_satisfies_capture_contract(source_contract, img.frame_desc)) {
+            release_capture_mutex();
+            BOOST_LOG(error) << "Pre-encode filter rejected captured frame contract"sv;
+            update_synthetic_hdr_runtime_status(false, "capture_contract_mismatch");
+            return -1;
+          }
+          if (!prepare_filter_handoff(img_ctx.encoder_texture.get(), img.frame_desc)) {
+            release_capture_mutex();
+            update_synthetic_hdr_runtime_status(false, "filter_handoff_failed");
+            return -1;
+          }
+          device_ctx->CopyResource(filter_handoff_texture.get(), img_ctx.encoder_texture.get());
+          if (!release_capture_mutex()) {
+            return -1;
+          }
+
+          auto handoff_semantic = img.frame_desc;
+          handoff_semantic.borrowed = false;
+          const auto filter_result = pre_encode_filter->process({
+            .texture = filter_handoff_texture.get(),
+            .srv = filter_handoff_srv.get(),
+            .format = img.format,
+            .semantic = handoff_semantic,
+            .width = static_cast<std::uint32_t>(img.width),
+            .height = static_cast<std::uint32_t>(img.height),
+          });
+          if (filter_result.status != filter_status_e::ready ||
+              !filter_result.frame.texture || !filter_result.frame.srv) {
+            BOOST_LOG(error) << "Pre-encode filter failed: "sv << filter_result.reason;
+            update_synthetic_hdr_runtime_status(false, filter_result.reason);
+            return -1;
+          }
+          update_synthetic_hdr_runtime_status(true);
+          conversion_input_texture = filter_result.frame.texture;
+          conversion_input_srv = filter_result.frame.srv;
+          conversion_input_format = filter_result.frame.format;
+          conversion_input_semantic = filter_result.frame.semantic;
+        }
+
+        const bool input_is_linear_fp16 =
+          conversion_input_semantic.domain == frame_domain_e::linear_scrgb &&
+          conversion_input_semantic.encoding == pixel_encoding_class_e::float16 &&
+          conversion_input_format == DXGI_FORMAT_R16G16B16A16_FLOAT;
+        const bool can_analyze_hdr_frame = hdr_analysis_enabled && input_is_linear_fp16;
+
         auto draw = [&](auto &input, auto &y_or_yuv_viewports, auto &uv_viewport) {
           device_ctx->PSSetShaderResources(0, 1, &input);
 
           // The SDR white gain buffer may be rebuilt at a frame boundary. Bind
           // the current buffer here so the pixel-shader fallback sees updates
           // just like the compute-shader path.
-          if (hlg_display_cbuf) {
-            ID3D11Buffer *hlg_cbuf = hlg_display_cbuf.get();
-            device_ctx->PSSetConstantBuffers(3, 1, &hlg_cbuf);
+          if (hdr_pre_encode) {
+            ID3D11Buffer *pre_encode_cbuf = hdr_pre_encode.constantBuffer.get();
+            device_ctx->PSSetConstantBuffers(3, 1, &pre_encode_cbuf);
           }
 
           // Select the correct pixel shader based on image gamma type:
@@ -479,7 +571,7 @@ namespace platf::dxgi {
           // This prevents double-gamma when the display is in ACM/HDR mode but the
           // capture is in a non-FP16 format, and also when a driver returns FP16 data
           // that already carries sRGB gamma (G22 colorspace with FP16 format).
-          const bool use_linear_shader = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
+          const bool use_linear_shader = input_is_linear_fp16;
 
           // Draw Y/YUV
           device_ctx->OMSetRenderTargets(1, &out_Y_or_YUV_rtv, nullptr);
@@ -511,12 +603,11 @@ namespace platf::dxgi {
         // Draw captured frame
         // Try compute-shader fast path first (HDR PQ/HLG -> P010, or SDR -> NV12;
         // type0, no rotation; scaling supported via *_scaled variants).
-        const bool input_is_linear_fp16 = img.linear_gamma && (img.format == DXGI_FORMAT_R16G16B16A16_FLOAT);
         const bool hdr_analysis_due =
           can_analyze_hdr_frame && should_dispatch_hdr_analysis();
         bool cs_used = false;
         bool hdr_analysis_snapshot_written = false;
-        update_sdr_band_gain();
+        update_hdr_pre_encode_transform();
         if (cs_path_active) {
           if (cs_for_p010) {
             // HDR P010: shader expects linear scRGB FP16 input.
@@ -527,7 +618,7 @@ namespace platf::dxgi {
                                (cs_is_scaled ? cs_p010_scaled_hdr_analysis : cs_p010_hdr_analysis) :
                                (cs_is_scaled ? cs_p010_scaled : cs_p010);
               cs_used = try_dispatch_cs_convert(
-                img_ctx.encoder_input_res.get(),
+                conversion_input_srv,
                 shader,
                 write_hdr_analysis_snapshot,
                 gpu_timing);
@@ -541,55 +632,36 @@ namespace platf::dxgi {
                               : (cs_is_scaled ? cs_nv12_pass_scaled : cs_nv12_pass);
             if (shader) {
               cs_used = try_dispatch_cs_convert(
-                img_ctx.encoder_input_res.get(), shader, false, gpu_timing);
+                conversion_input_srv, shader, false, gpu_timing);
             }
           }
         }
         if (!cs_used) {
-          draw(img_ctx.encoder_input_res, out_Y_or_YUV_viewports, out_UV_viewport);
+          draw(conversion_input_srv, out_Y_or_YUV_viewports, out_UV_viewport);
           mark_draw_gpu_timing(gpu_timing);
         }
 
         ID3D11ShaderResourceView *emptyShaderResourceView = nullptr;
         device_ctx->PSSetShaderResources(0, 1, &emptyShaderResourceView);
 
-        bool dispatch_hdr_after_unlock = false;
-        ID3D11ShaderResourceView *hdr_analysis_srv = nullptr;
-        ID3D11ShaderResourceView *hdr_analysis_pq_input_srv = nullptr;
-        ID3D11Buffer *hdr_analysis_params = nullptr;
-
-        if (hdr_analysis_due) {
-          if (hdr_analysis_snapshot_written) {
-            hdr_analysis_srv = hdr_analysis_snapshot_srv.get();
-            hdr_analysis_pq_input_srv = hdr_analysis_pq_srv.get();
-            hdr_analysis_params = hdr_analysis_snapshot_cbuf.get();
-          } else {
-            // Fallback for the pixel-shader path and devices that cannot bind the
-            // low-resolution snapshot UAV.
-            device_ctx->CopyResource(hdr_analysis_input_tex.get(), img_ctx.encoder_texture.get());
-            hdr_analysis_srv = hdr_analysis_input_srv.get();
-            hdr_analysis_params = hdr_analysis_cbuf.get();
-          }
-          dispatch_hdr_after_unlock = true;
-        }
+        const HdrAnalysisSource hdr_analysis_source = hdr_analysis_due
+                                                        ? prepare_hdr_analysis_source(
+                                                            hdr_analysis_snapshot_written,
+                                                            conversion_input_texture)
+                                                        : HdrAnalysisSource {};
 
         // Release encoder mutex to allow capture code to reuse this image.
         finish_gpu_timing_sample(gpu_timing, std::move(gpu_timing_sample));
-        if (borrowed_vdd_frame) {
-          if (!img.release_borrowed_vdd_after_convert(img_ctx.encoder_mutex.get())) {
-            return -1;
-          }
-        }
-        else {
-          img_ctx.encoder_mutex->ReleaseSync(encoder_release_key);
+        if (!release_capture_mutex()) {
+          return -1;
         }
         if (vram_timing_enabled) {
           cpu_submit_timing.add(elapsed_ms(std::chrono::steady_clock::now() - submit_start));
           log_cpu_timing();
         }
 
-        if (dispatch_hdr_after_unlock) {
-          dispatch_hdr_analysis(hdr_analysis_srv, hdr_analysis_pq_input_srv, hdr_analysis_params);
+        if (hdr_analysis_source) {
+          dispatch_hdr_analysis(hdr_analysis_source);
         }
       }
 
@@ -622,53 +694,58 @@ namespace platf::dxgi {
     }
 
     int
-    configure_hlg_display(bool use_hlg_shader, bool is_probe) {
-      hlg_display_cbuf.reset();
+    configure_hdr_pre_encode(bool use_pq_shader, bool use_hlg_shader, bool is_probe) {
+      hdr_pre_encode.constantBuffer.reset();
+      hdr_pre_encode.params = { 0.0f, 1.0f, 1.0f, 0.0f };
       ID3D11Buffer *null_cbuf = nullptr;
       device_ctx->PSSetConstantBuffers(3, 1, &null_cbuf);
-      hlg_sdr_band_gain_value = 1.0f;
-      hlg_sdr_band_top_value = 0.0f;
 
       float analysis_max_nits = 10000.0f;
-      if (use_hlg_shader) {
+      if (use_pq_shader || use_hlg_shader) {
         SS_HDR_METADATA metadata {};
         // Use the effective capture-display metadata as the single source of
         // truth. VDD reports the client-mapped capabilities here; a physical
         // output reports the values after Windows applies its HDR color profile.
         const bool has_display_peak =
           display->get_hdr_metadata(metadata) && metadata.maxDisplayLuminance > 0;
-        const float peak_nits = has_display_peak
-                                  ? static_cast<float>(metadata.maxDisplayLuminance)
-                                  : 1000.0f;
-        const float system_gamma = ::video::hlg_system_gamma(peak_nits);
-        hlg_peak_nits_value = peak_nits;
-        hlg_system_gamma_value = system_gamma;
-        const HlgDisplayParams params {
+        // HLG needs the nominal display peak for its inverse OOTF. PQ does not,
+        // but uses the same constant-buffer layout for SDR-band re-anchoring.
+        const float peak_nits = use_hlg_shader
+                                  ? (has_display_peak
+                                       ? static_cast<float>(metadata.maxDisplayLuminance)
+                                       : 1000.0f)
+                                  : 10000.0f;
+        const float system_gamma = use_hlg_shader
+                                     ? ::video::hlg_system_gamma(peak_nits)
+                                     : 1.0f;
+        const HdrPreEncodeParams params {
           peak_nits,
           system_gamma,
           1.0f,
           0.0f,
         };
 
-        auto hlg_params = make_buffer(device.get(), params);
-        if (!hlg_params) {
-          BOOST_LOG(error) << "Failed to create HLG display parameter buffer";
+        auto hdr_params = make_buffer(device.get(), params);
+        if (!hdr_params) {
+          BOOST_LOG(error) << "Failed to create HDR pre-encode parameter buffer";
           return -1;
         }
 
-        ID3D11Buffer *hlg_params_p = hlg_params.get();
-        device_ctx->PSSetConstantBuffers(3, 1, &hlg_params_p);
-        hlg_display_cbuf = std::move(hlg_params);
+        ID3D11Buffer *hdr_params_p = hdr_params.get();
+        device_ctx->PSSetConstantBuffers(3, 1, &hdr_params_p);
+        hdr_pre_encode.constantBuffer = std::move(hdr_params);
+        hdr_pre_encode.params = params;
         // Vivid statistics must describe the encoded HLG range, not scRGB
         // headroom that cannot be represented by the nominal HLG signal.
-        analysis_max_nits = std::min(peak_nits, 10000.0f);
-
-        BOOST_LOG(is_probe ? debug : info)
-          << "HLG conversion: BT.2100 inverse OOTF, nominal display peak "
-          << peak_nits << " nits, system gamma " << system_gamma
-          << (has_display_peak
-                ? " (capture display metadata)"
-                : " (1000-nit fallback)");
+        if (use_hlg_shader) {
+          analysis_max_nits = std::min(peak_nits, 10000.0f);
+          BOOST_LOG(is_probe ? debug : info)
+            << "HLG conversion: BT.2100 inverse OOTF, nominal display peak "
+            << peak_nits << " nits, system gamma " << system_gamma
+            << (has_display_peak
+                  ? " (capture display metadata)"
+                  : " (1000-nit fallback)");
+        }
       }
 
       hdr_analysis_max_nits = analysis_max_nits;
@@ -698,80 +775,72 @@ namespace platf::dxgi {
     }
 
     void
-    reset_sdr_band_gain() {
-      if (!hlg_display_cbuf || hlg_peak_nits_value <= 0.0f ||
-          (std::abs(hlg_sdr_band_gain_value - 1.0f) < 0.01f &&
-           std::abs(hlg_sdr_band_top_value) < 0.01f)) {
+    reset_hdr_pre_encode_transform() {
+      if (!hdr_pre_encode || hdr_pre_encode.params.nominalPeakNits <= 0.0f ||
+          (std::abs(hdr_pre_encode.params.sdrBandGain - 1.0f) < 0.01f &&
+           std::abs(hdr_pre_encode.params.sdrBandTopScrgb) < 0.01f)) {
         return;
       }
 
-      const HlgDisplayParams params {
-        hlg_peak_nits_value,
-        hlg_system_gamma_value,
-        1.0f,
-        0.0f,
-      };
+      HdrPreEncodeParams params = hdr_pre_encode.params;
+      params.sdrBandGain = 1.0f;
+      params.sdrBandTopScrgb = 0.0f;
       auto next_buffer = make_buffer(device.get(), params);
       if (!next_buffer) {
-        BOOST_LOG(warning) << "Failed to reset HLG SDR band gain; retaining previous value"sv;
+        BOOST_LOG(warning) << "Failed to reset HDR pre-encode transform; retaining previous value"sv;
         return;
       }
-      hlg_display_cbuf = std::move(next_buffer);
-      hlg_sdr_band_gain_value = 1.0f;
-      hlg_sdr_band_top_value = 0.0f;
+      hdr_pre_encode.constantBuffer = std::move(next_buffer);
+      hdr_pre_encode.params = params;
     }
 
     void
     set_client_sdr_white(float nits) {
-      client_sdr_white_nits = std::isfinite(nits) && nits > 0.0f ? nits : 0.0f;
-      if (client_sdr_white_nits <= 0.0f) {
-        reset_sdr_band_gain();
+      hdr_pre_encode.clientSdrWhiteNits = std::isfinite(nits) && nits > 0.0f ? nits : 0.0f;
+      if (hdr_pre_encode.clientSdrWhiteNits <= 0.0f) {
+        reset_hdr_pre_encode_transform();
       }
     }
 
     // Re-anchor SDR-referenced content to the client's SDR reference white.
-    // Called per frame before HLG conversion; cheap float compare,
+    // Called per frame before PQ/HLG conversion; cheap float compare,
     // the constant buffer is only rebuilt when the gain actually changes.
     void
-    update_sdr_band_gain() {
-      if (client_sdr_white_nits <= 0.0f) {
-        reset_sdr_band_gain();
+    update_hdr_pre_encode_transform() {
+      if (hdr_pre_encode.clientSdrWhiteNits <= 0.0f) {
+        reset_hdr_pre_encode_transform();
         return;
       }
-      if (!hlg_display_cbuf || hlg_peak_nits_value <= 0.0f) {
+      if (!hdr_pre_encode || hdr_pre_encode.params.nominalPeakNits <= 0.0f) {
         return;
       }
       auto vram_display = std::dynamic_pointer_cast<platf::dxgi::display_vram_t>(display);
       if (!vram_display) {
         return;
       }
-      const auto windows_white = vram_display->composed_sdr_white_nits();
+      const auto windows_white = vram_display->capture_sdr_white_nits();
       if (!windows_white || *windows_white < 50.0f) {
         return;
       }
 
-      const float gain = std::clamp(client_sdr_white_nits / *windows_white, 0.5f, 2.5f);
+      const float gain = std::clamp(hdr_pre_encode.clientSdrWhiteNits / *windows_white, 0.5f, 2.5f);
       const float band_top = *windows_white / 80.0f;
-      if (std::abs(gain - hlg_sdr_band_gain_value) < 0.01f &&
-          std::abs(band_top - hlg_sdr_band_top_value) < 0.01f) {
+      if (std::abs(gain - hdr_pre_encode.params.sdrBandGain) < 0.01f &&
+          std::abs(band_top - hdr_pre_encode.params.sdrBandTopScrgb) < 0.01f) {
         return;
       }
 
-      const HlgDisplayParams params {
-        hlg_peak_nits_value,
-        hlg_system_gamma_value,
-        gain,
-        band_top,
-      };
+      HdrPreEncodeParams params = hdr_pre_encode.params;
+      params.sdrBandGain = gain;
+      params.sdrBandTopScrgb = band_top;
       auto next_buffer = make_buffer(device.get(), params);
       if (!next_buffer) {
-        BOOST_LOG(warning) << "Failed to update HLG SDR band gain; retaining previous value"sv;
+        BOOST_LOG(warning) << "Failed to update HDR SDR band gain; retaining previous value"sv;
         return;
       }
-      hlg_display_cbuf = std::move(next_buffer);
-      hlg_sdr_band_gain_value = gain;
-      hlg_sdr_band_top_value = band_top;
-      BOOST_LOG(info) << "SDR band gain: phone " << client_sdr_white_nits
+      hdr_pre_encode.constantBuffer = std::move(next_buffer);
+      hdr_pre_encode.params = params;
+      BOOST_LOG(info) << "SDR band gain: client " << hdr_pre_encode.clientSdrWhiteNits
                       << " nits, windows " << *windows_white << " nits, gain " << gain;
     }
 
@@ -831,7 +900,7 @@ namespace platf::dxgi {
       const bool use_pq_shader = ::video::colorspace_is_pq(colorspace);
       const bool use_hlg_shader = ::video::colorspace_is_hlg(colorspace);
 
-      if (configure_hlg_display(use_hlg_shader, is_probe) != 0) {
+      if (configure_hdr_pre_encode(use_pq_shader, use_hlg_shader, is_probe) != 0) {
         return -1;
       }
 
@@ -1228,6 +1297,32 @@ namespace platf::dxgi {
       }
       display = nullptr;
 
+      if (this->display->pre_encode_filter != pre_encode_filter_e::none) {
+        const bool hdr_output =
+          format == DXGI_FORMAT_P010 || format == DXGI_FORMAT_Y410 || format == DXGI_FORMAT_R16_UINT;
+        if (!hdr_output) {
+          BOOST_LOG(error) << "Pre-encode HDR filter requires a 10-bit HDR encoder surface"sv;
+          return -1;
+        }
+        const auto &contract = this->display->capture_contract;
+        if (contract.required_domain != frame_domain_e::sdr_rec709 ||
+            contract.preferred_encoding != pixel_encoding_class_e::unorm8 ||
+            !contract.require_private_handoff) {
+          BOOST_LOG(error) << "Pre-encode HDR filter requires a private SDR UNORM capture contract"sv;
+          return -1;
+        }
+        pre_encode_filter = make_pre_encode_filter(
+          this->display->pre_encode_filter,
+          device.get(),
+          device_ctx.get(),
+          this->display->pre_encode_filter_backend_path,
+          this->display->pre_encode_filter_config);
+        if (!pre_encode_filter) {
+          BOOST_LOG(error) << "Failed to create pre-encode filter"sv;
+          return -1;
+        }
+      }
+
       blend_disable = make_blend(device.get(), false, false);
       if (!blend_disable) {
         return -1;
@@ -1348,6 +1443,53 @@ namespace platf::dxgi {
       img_ctx.img_weak = img.weak_from_this();
 
       return 0;
+    }
+
+    bool
+    prepare_filter_handoff(
+      ID3D11Texture2D *source,
+      const captured_frame_desc_t &semantic) {
+      if (!source || semantic.domain != frame_domain_e::sdr_rec709 ||
+          semantic.encoding != pixel_encoding_class_e::unorm8) {
+        BOOST_LOG(error) << "Cannot detach unsupported pre-encode filter input"sv;
+        return false;
+      }
+
+      D3D11_TEXTURE2D_DESC source_desc {};
+      source->GetDesc(&source_desc);
+      if (filter_handoff_texture &&
+          filter_handoff_width == source_desc.Width &&
+          filter_handoff_height == source_desc.Height &&
+          filter_handoff_format == source_desc.Format &&
+          filter_handoff_generation == semantic.source_generation) {
+        return true;
+      }
+
+      filter_handoff_srv.reset();
+      filter_handoff_texture.reset();
+      source_desc.MipLevels = 1;
+      source_desc.ArraySize = 1;
+      source_desc.Usage = D3D11_USAGE_DEFAULT;
+      source_desc.BindFlags = D3D11_BIND_SHADER_RESOURCE;
+      source_desc.CPUAccessFlags = 0;
+      source_desc.MiscFlags = 0;
+      auto status = device->CreateTexture2D(&source_desc, nullptr, &filter_handoff_texture);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create private filter handoff texture: "sv << util::log_hex(status);
+        return false;
+      }
+      status = device->CreateShaderResourceView(
+        filter_handoff_texture.get(), nullptr, &filter_handoff_srv);
+      if (FAILED(status)) {
+        BOOST_LOG(error) << "Failed to create private filter handoff SRV: "sv << util::log_hex(status);
+        filter_handoff_texture.reset();
+        return false;
+      }
+      filter_handoff_width = source_desc.Width;
+      filter_handoff_height = source_desc.Height;
+      filter_handoff_format = source_desc.Format;
+      filter_handoff_generation = semantic.source_generation;
+      return true;
     }
 
     query_t
@@ -1586,6 +1728,35 @@ namespace platf::dxgi {
     }
 
     void
+    update_synthetic_hdr_runtime_status(
+      bool processed_frame,
+      std::string_view frame_failure = {}) {
+      if (!pre_encode_filter) {
+        runtime_status.synthetic_hdr_backend = "none";
+        runtime_status.synthetic_hdr_state = "disabled";
+        runtime_status.synthetic_hdr_failure_reason.clear();
+        return;
+      }
+
+      const std::string backend { pre_encode_filter->backend_name() };
+      const std::string state = !frame_failure.empty() || pre_encode_filter->degraded()
+                                  ? "degraded"
+                                  : processed_frame ? "active" : "warming_up";
+      const std::string reason = frame_failure.empty()
+                                   ? std::string { pre_encode_filter->failure_reason() }
+                                   : std::string { frame_failure };
+      if (runtime_status.synthetic_hdr_backend == backend &&
+          runtime_status.synthetic_hdr_state == state &&
+          runtime_status.synthetic_hdr_failure_reason == reason) {
+        return;
+      }
+      runtime_status.synthetic_hdr_backend = backend;
+      runtime_status.synthetic_hdr_state = state;
+      runtime_status.synthetic_hdr_failure_reason = reason;
+      ::video::update_hdr_pipeline_status(runtime_status_id, runtime_status);
+    }
+
+    void
     publish_runtime_status(
       const ::video::sunshine_colorspace_t &colorspace,
       bool is_probe) {
@@ -1624,6 +1795,7 @@ namespace platf::dxgi {
         cs_path_active ? std::string {} : cs_fallback_reason;
       runtime_status.analysis_failure_reason =
         runtime_status.analysis_active ? std::string {} : hdr_analysis_failure_reason;
+      update_synthetic_hdr_runtime_status(false);
 
       if (runtime_status_id == 0) {
         runtime_status_id = ::video::register_hdr_pipeline_status(runtime_status);
@@ -1637,14 +1809,7 @@ namespace platf::dxgi {
 
     buf_t subsample_offset;
     buf_t color_matrix;
-    buf_t hlg_display_cbuf;
-
-    // Client-reported SDR reference white (nits); 0 = not reported, gain stays 1.
-    float client_sdr_white_nits = 0.0f;
-    float hlg_peak_nits_value = 0.0f;
-    float hlg_system_gamma_value = 1.2f;
-    float hlg_sdr_band_gain_value = 1.0f;
-    float hlg_sdr_band_top_value = 0.0f;
+    HdrPreEncodeState hdr_pre_encode;
 
     blend_t blend_disable;
     sampler_state_t sampler_linear;
@@ -1659,6 +1824,14 @@ namespace platf::dxgi {
     // convert(). We can't store them in the img_t itself because it is shared
     // amongst multiple hwdevice_t objects (and therefore multiple ID3D11Devices).
     std::map<uint32_t, encoder_img_ctx_t> img_ctx_map;
+
+    std::unique_ptr<pre_encode_filter_t> pre_encode_filter;
+    texture2d_t filter_handoff_texture;
+    shader_res_t filter_handoff_srv;
+    std::uint32_t filter_handoff_width = 0;
+    std::uint32_t filter_handoff_height = 0;
+    DXGI_FORMAT filter_handoff_format = DXGI_FORMAT_UNKNOWN;
+    std::uint64_t filter_handoff_generation = 0;
 
     std::shared_ptr<display_base_t> display;
 
@@ -1711,7 +1884,7 @@ namespace platf::dxgi {
     uav_t hdr_final_result_uav;            // UAV view for pass 2 output
     buf_t hdr_global_histogram_buf;        // 256-bin PQ histogram accumulated by pass 1 atomics
     uav_t hdr_global_histogram_uav;        // Typed R32_UINT UAV (clearable + atomic-capable)
-    buf_t hdr_staging_buf;                 // Staging buffer for CPU readback (1 FinalResult)
+    buf_t hdr_staging_buf;                 // One non-blocking CPU readback; new analysis waits while pending
     buf_t hdr_analysis_cbuf;               // Constant buffer for pass 1 (analysis resolution)
     buf_t hdr_analysis_snapshot_cbuf;      // Shared converter/pass 1 params for the snapshot
     buf_t hdr_reduce_cbuf;                 // Constant buffer for pass 2 (numGroups)
@@ -1720,7 +1893,7 @@ namespace platf::dxgi {
     uint32_t hdr_num_groups = 0;           // Number of thread groups dispatched in pass 1
     uint64_t hdr_analysis_frame_index = 0; // Used to downsample analysis frequency
     uint64_t hdr_analysis_sample_sequence = 0; // Counts completed, independent GPU samples
-    bool hdr_analysis_pending = false;     // Whether we have results ready to read
+    bool hdr_analysis_pending = false;     // Prevents overwriting a readback the GPU has not completed
     bool hdr_analysis_ready = false;       // Whether the analyzer's GPU resources were created
     bool hdr_analysis_enabled = false;     // Whether analysis runs: resources exist and the stream can carry metadata
     ::video::hdr_metadata::formats_t hdr_metadata_formats;  // Dynamic metadata formats this stream may carry
@@ -1995,7 +2168,7 @@ namespace platf::dxgi {
         return -1;
       }
 
-      // --- Staging buffer for async CPU readback (1 FinalResult only) ---
+      // --- Staging ring for asynchronous CPU readback ---
       D3D11_BUFFER_DESC staging_desc = {};
       staging_desc.ByteWidth = sizeof(FinalResult);
       staging_desc.Usage = D3D11_USAGE_STAGING;
@@ -2019,20 +2192,64 @@ namespace platf::dxgi {
     }
 
     /**
+     * @brief Prepare the common analysis contract from either available source.
+     */
+    HdrAnalysisSource
+    prepare_hdr_analysis_source(
+      bool snapshot_written,
+      ID3D11Texture2D *encoder_texture) {
+      if (snapshot_written) {
+        return {
+          hdr_analysis_snapshot_srv.get(),
+          hdr_analysis_pq_srv.get(),
+          hdr_analysis_snapshot_cbuf.get(),
+        };
+      }
+
+      // Pixel-shader fallback: preserve the source outside the encoder keyed
+      // mutex, then let the common pass-1 analyzer apply HdrPreEncodeTransform.
+      if (!hdr_analysis_input_tex || !encoder_texture) {
+        return {};
+      }
+      D3D11_TEXTURE2D_DESC analysis_desc {};
+      D3D11_TEXTURE2D_DESC encoder_desc {};
+      hdr_analysis_input_tex->GetDesc(&analysis_desc);
+      encoder_texture->GetDesc(&encoder_desc);
+      if (analysis_desc.Width != encoder_desc.Width ||
+          analysis_desc.Height != encoder_desc.Height ||
+          analysis_desc.MipLevels != encoder_desc.MipLevels ||
+          analysis_desc.ArraySize != encoder_desc.ArraySize ||
+          analysis_desc.Format != encoder_desc.Format ||
+          analysis_desc.SampleDesc.Count != encoder_desc.SampleDesc.Count ||
+          analysis_desc.SampleDesc.Quality != encoder_desc.SampleDesc.Quality) {
+        // WGC window capture may change size independently of the display-sized
+        // analysis resources. Dropping this sample is safer than copying
+        // incompatible resources and reusing stale luminance metadata.
+        return {};
+      }
+      device_ctx->CopyResource(hdr_analysis_input_tex.get(), encoder_texture);
+      return {
+        hdr_analysis_input_srv.get(),
+        nullptr,
+        hdr_analysis_cbuf.get(),
+      };
+    }
+
+    /**
      * @brief Dispatch the two-pass luminance analysis for the current frame.
      * Pass 1: Per-tile analysis — reads scRGB texture, writes per-group results
      * Pass 2: Global reduction — reads per-group results, writes 1 final result
      * Then copies final result to staging for async CPU readback next frame.
-     * @param input_srv SRV of either the scRGB FP16 frame or pre-aggregated snapshot
-     * @param cell_pq_srv Per-cell PQ average that accompanies a snapshot input, else null
-     * @param analysis_params Parameters describing that input
+     * @param source Unified full-frame or snapshot analysis input.
      */
     void
-    dispatch_hdr_analysis(
-      ID3D11ShaderResourceView *input_srv,
-      ID3D11ShaderResourceView *cell_pq_srv,
-      ID3D11Buffer *analysis_params) {
-      if (!hdr_analysis_enabled || !input_srv || !analysis_params) return;
+    dispatch_hdr_analysis(const HdrAnalysisSource &source) {
+      if (!hdr_analysis_enabled || !source) return;
+      if (hdr_analysis_pending) {
+        // The GPU is already behind this analysis cadence. Drop the new sample
+        // instead of queuing progressively older metadata or blocking capture.
+        return;
+      }
 
       // Unbind render targets to avoid resource hazard (SRV vs RTV conflict)
       ID3D11RenderTargetView *null_rtv = nullptr;
@@ -2045,11 +2262,16 @@ namespace platf::dxgi {
       // ===== Pass 1: Per-tile analysis =====
       device_ctx->CSSetShader(hdr_pass1_cs.get(), nullptr, 0);
       // t1 stays unbound on the full-frame fallback, which computes the PQ sum itself.
-      ID3D11ShaderResourceView *pass1_srvs[] = { input_srv, cell_pq_srv };
+      ID3D11ShaderResourceView *pass1_srvs[] = { source.statistics, source.pqAverage };
       device_ctx->CSSetShaderResources(0, 2, pass1_srvs);
       ID3D11UnorderedAccessView *pass1_uavs[] = { hdr_group_results_uav.get(), hdr_global_histogram_uav.get() };
       device_ctx->CSSetUnorderedAccessViews(0, 2, pass1_uavs, nullptr);
+      ID3D11Buffer *analysis_params = source.parameters;
       device_ctx->CSSetConstantBuffers(0, 1, &analysis_params);
+      if (hdr_pre_encode) {
+        ID3D11Buffer *pre_encode_cbuf = hdr_pre_encode.constantBuffer.get();
+        device_ctx->CSSetConstantBuffers(3, 1, &pre_encode_cbuf);
+      }
 
       uint32_t groups_x = (hdr_analysis_width + 15) / 16;
       uint32_t groups_y = (hdr_analysis_height + 15) / 16;
@@ -2061,6 +2283,8 @@ namespace platf::dxgi {
       ID3D11UnorderedAccessView *null_uavs[2] = { nullptr, nullptr };
       device_ctx->CSSetShaderResources(0, 2, null_srvs);
       device_ctx->CSSetUnorderedAccessViews(0, 2, null_uavs, nullptr);
+      ID3D11Buffer *null_pre_encode_cbuf = nullptr;
+      device_ctx->CSSetConstantBuffers(3, 1, &null_pre_encode_cbuf);
 
       // ===== Pass 2: Global reduction =====
       device_ctx->CSSetShader(hdr_pass2_cs.get(), nullptr, 0);
@@ -2080,9 +2304,7 @@ namespace platf::dxgi {
       device_ctx->CSSetConstantBuffers(0, 1, &null_cb);
       device_ctx->CSSetShader(nullptr, nullptr, 0);
 
-      // Copy final result to staging buffer for CPU readback next frame
       device_ctx->CopyResource(hdr_staging_buf.get(), hdr_final_result_buf.get());
-
       hdr_analysis_pending = true;
     }
 
@@ -2093,8 +2315,13 @@ namespace platf::dxgi {
      */
     void
     read_hdr_analysis_results() {
+      if (!hdr_analysis_pending) {
+        return;
+      }
       D3D11_MAPPED_SUBRESOURCE mapped = {};
-      HRESULT status = device_ctx->Map(hdr_staging_buf.get(), 0, D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
+      HRESULT status = device_ctx->Map(
+        hdr_staging_buf.get(), 0,
+        D3D11_MAP_READ, D3D11_MAP_FLAG_DO_NOT_WAIT, &mapped);
 
       if (status == DXGI_ERROR_WAS_STILL_DRAWING) {
         // GPU hasn't finished yet — skip this readback, try next frame
@@ -2103,12 +2330,14 @@ namespace platf::dxgi {
 
       if (FAILED(status)) {
         BOOST_LOG(debug) << "HDR staging Map failed: " << util::log_hex(status);
+        hdr_analysis_pending = false;
         return;
       }
 
       auto *result = reinterpret_cast<const FinalResult *>(mapped.pData);
 
       if (result->pixelCount > 0) {
+        hdr_luminance_stats_out = {};
         hdr_luminance_stats_out.min_maxrgb = result->minMaxRGB;
         hdr_luminance_stats_out.max_maxrgb = result->maxMaxRGB;
         hdr_luminance_stats_out.avg_maxrgb = result->sumMaxRGB / static_cast<float>(result->pixelCount);
@@ -2136,6 +2365,9 @@ namespace platf::dxgi {
         // Retain P99 in nits for the independent HDR10+ path, and fill the nine
         // percentiles ST 2094-40 deployment profiles carry from the same walk.
         const uint32_t total = result->pixelCount;
+        hdr_luminance_stats_out.near_black_fraction =
+          static_cast<float>(result->histogram[0]) / static_cast<float>(total);
+        hdr_luminance_stats_out.near_black_stats_valid = true;
         const auto &percentages = ::video::hdr_metadata::hdr10plus_percentages;
         constexpr size_t kDistCount = percentages.size();
 
@@ -2159,6 +2391,9 @@ namespace platf::dxgi {
             if (!dist_found[p] && cumulative >= dist_targets[p]) {
               hdr_luminance_stats_out.distribution_maxrgb[p] =
                 ::video::hdr_metadata::pq_to_nits(pq_bin_center);
+              if (p == 0) {
+                hdr_luminance_stats_out.percentile_1_pq = pq_bin_center;
+              }
               dist_found[p] = true;
             }
           }
@@ -2649,9 +2884,9 @@ namespace platf::dxgi {
       };
       const UINT cbuf_count = write_hdr_analysis_snapshot ? 3 : 2;
       device_ctx->CSSetConstantBuffers(0, cbuf_count, cbufs);
-      if (hlg_display_cbuf) {
-        ID3D11Buffer *hlg_cbuf = hlg_display_cbuf.get();
-        device_ctx->CSSetConstantBuffers(3, 1, &hlg_cbuf);
+      if (hdr_pre_encode) {
+        ID3D11Buffer *pre_encode_cbuf = hdr_pre_encode.constantBuffer.get();
+        device_ctx->CSSetConstantBuffers(3, 1, &pre_encode_cbuf);
       }
 
       // Dispatch covers only the active rect (precomputed in init_compute_path).
@@ -2669,8 +2904,8 @@ namespace platf::dxgi {
       device_ctx->CSSetUnorderedAccessViews(0, uav_count, null_uavs, nullptr);
       ID3D11Buffer *null_cb[3] = { nullptr, nullptr, nullptr };
       device_ctx->CSSetConstantBuffers(0, cbuf_count, null_cb);
-      ID3D11Buffer *null_hlg_cbuf = nullptr;
-      device_ctx->CSSetConstantBuffers(3, 1, &null_hlg_cbuf);
+      ID3D11Buffer *null_pre_encode_cbuf = nullptr;
+      device_ctx->CSSetConstantBuffers(3, 1, &null_pre_encode_cbuf);
       device_ctx->CSSetShader(nullptr, nullptr, 0);
       if (timing) {
         device_ctx->End(timing->before_copy.get());
@@ -2830,7 +3065,12 @@ namespace platf::dxgi {
       if (!nvenc_d3d) return false;
 
       hdr_luminance_analysis_available = false;
-      if (!nvenc_d3d->create_encoder(config::video.nv, client_config, colorspace, buffer_format)) return false;
+      auto nvenc_config = config::video.nv;
+      // The block-linear array input is experimental: it has stalled encoder
+      // probing on some drivers and a wedged probe delays every stream start.
+      // Probe the known-good pitch-linear path; only real sessions opt in.
+      nvenc_config.cuda_array_input = nvenc_config.cuda_array_input && !is_probe;
+      if (!nvenc_d3d->create_encoder(nvenc_config, client_config, colorspace, buffer_format)) return false;
 
       base.apply_colorspace(colorspace);
       base.set_client_sdr_white(client_config.hdr_capabilities.sdr_white_nits);
@@ -3359,6 +3599,12 @@ namespace platf::dxgi {
     cursor_white_normalization_enabled = false;
     cursor_white_multiplier.reset();
     cursor_white_multiplier_value = 300.0f / 80.0f;
+    producer_sdr_white_nits = 0.0f;
+
+    if (const auto windows_white = sdr_white_nits()) {
+      cursor_white_multiplier_value = *windows_white / 80.0f;
+      BOOST_LOG(info) << "Windows SDR reference white: " << *windows_white << " nits";
+    }
 
     D3D11_SAMPLER_DESC sampler_desc {};
     sampler_desc.Filter = D3D11_FILTER_MIN_MAG_MIP_LINEAR;
@@ -3407,8 +3653,9 @@ namespace platf::dxgi {
         return -1;
       }
 
-      // Keep the established 300-nit fallback for backends without producer
-      // white-level metadata. VDD replaces it with the driver's current value.
+      // DisplayConfig supplied the initial physical-output value above. Keep the
+      // established 300-nit fallback only when that query failed; VDD may replace
+      // either value with fresher producer metadata.
       float white_multiplier_data[16 / sizeof(float)] { cursor_white_multiplier_value.load(std::memory_order_relaxed) };  // aligned to 16-byte
       cursor_white_multiplier = make_buffer(device.get(), white_multiplier_data);
       if (!cursor_white_multiplier) {
@@ -3444,12 +3691,18 @@ namespace platf::dxgi {
 
   void
   display_vram_t::set_cursor_sdr_white_level(UINT32 sdr_white_level_x1000) {
-    if (!cursor_white_normalization_enabled || sdr_white_level_x1000 == 0) {
+    if (sdr_white_level_x1000 == 0) {
       return;
     }
 
     const float sdr_white_nits = static_cast<float>(sdr_white_level_x1000) / 1000.0f;
     if (!std::isfinite(sdr_white_nits) || sdr_white_nits < 1.0f || sdr_white_nits > 10000.0f) {
+      return;
+    }
+
+    producer_sdr_white_nits.store(sdr_white_nits, std::memory_order_release);
+    if (!cursor_white_normalization_enabled) {
+      cursor_white_multiplier_value = sdr_white_nits / 80.0f;
       return;
     }
 
@@ -3470,10 +3723,16 @@ namespace platf::dxgi {
   }
 
   std::optional<float>
-  display_vram_t::composed_sdr_white_nits() const {
-    if (!cursor_white_normalization_enabled) {
-      return std::nullopt;
+  display_vram_t::capture_sdr_white_nits() const {
+    const float producer_white = producer_sdr_white_nits.load(std::memory_order_acquire);
+    if (producer_white > 0.0f) {
+      return producer_white;
     }
+    if (const auto windows_white = sdr_white_nits()) {
+      return windows_white;
+    }
+    // Preserve the established fallback for outputs where neither DisplayConfig
+    // nor a producer-side white-level report is available.
     return cursor_white_multiplier_value.load(std::memory_order_relaxed) * 80.0f;
   }
 
@@ -3869,6 +4128,7 @@ namespace platf::dxgi {
     img->format = (capture_format == DXGI_FORMAT_UNKNOWN) ? DXGI_FORMAT_B8G8R8A8_UNORM : capture_format;
     img->linear_gamma = capture_linear_gamma;
     img->borrowed_vdd_texture = false;
+    img->frame_desc = dummy ? captured_frame_desc_t {} : describe_captured_frame(img->format, false);
 
     D3D11_TEXTURE2D_DESC t {};
     t.Width = img->width;

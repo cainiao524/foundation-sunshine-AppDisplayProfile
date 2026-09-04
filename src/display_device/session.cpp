@@ -407,7 +407,7 @@ namespace display_device {
       }
     }
 
-    auto parsed_config = make_parsed_config(config, session);
+    auto parsed_config = make_parsed_config(config, session, is_reconfigure);
     if (!parsed_config) {
       BOOST_LOG(error) << "Failed to parse configuration for the display device settings!";
       restore_state_impl(revert_reason_e::config_cleanup);
@@ -445,7 +445,8 @@ namespace display_device {
     }
 
     const bool vulkan_hdr_bridge_requested =
-      should_prepare_vdd && !is_system_rdp_vdd_session && session.enable_hdr && config.vdd_vulkan_hdr_bridge;
+      should_prepare_vdd && !is_system_rdp_vdd_session &&
+      display_prepared_for_hdr(config, session) && config.vdd_vulkan_hdr_bridge;
     const bool will_disable_physical_displays =
       should_prepare_vdd && !is_system_rdp_vdd_session &&
       parsed_config->vdd_prep == parsed_config_t::vdd_prep_e::display_off;

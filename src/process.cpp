@@ -27,6 +27,7 @@
 #include "crypto.h"
 #include "display_device/parsed_config.h"
 #include "display_device/session.h"
+#include "file_handler.h"
 #include "httpcommon.h"
 #include "logging.h"
 #include "platform/common.h"
@@ -599,6 +600,18 @@ namespace proc {
     return _app.name;
   }
 
+  std::optional<rtsp_stream::synthetic_hdr_config_t>
+  proc_t::get_app_rtx_hdr_config(int app_id) const {
+    if (_app_id == app_id && _app_id > 0) {
+      return _app.rtx_hdr;
+    }
+    const auto app_id_string = std::to_string(app_id);
+    const auto iter = std::find_if(_apps.begin(), _apps.end(), [&app_id_string](const auto &app) {
+      return app.id == app_id_string;
+    });
+    return iter == _apps.end() ? std::nullopt : iter->rtx_hdr;
+  }
+
   void
   proc_t::run_menu_cmd(std::string cmd_id) {
     auto iter = std::find_if(_app.menu_cmds.begin(), _app.menu_cmds.end(), [&cmd_id](const auto menu_cmd) {
@@ -720,22 +733,22 @@ namespace proc {
       return DEFAULT_APP_IMAGE_PATH;
     }
 
-    // 处理网络图片下载
+    // 婢跺嫮鎮婄純鎴犵捕閸ュ墽澧栨稉瀣祰
     if (app_image_path.find("http://") == 0 || app_image_path.find("https://") == 0) {
       try {
         std::string original_url = app_image_path;
         
-        // 移除查询参数
+        // 缁夊娅庨弻銉嚄閸欏倹鏆?
         size_t query_start = app_image_path.find('?');
         if (query_start != std::string::npos) {
           app_image_path = app_image_path.substr(0, query_start);
         }
 
-        // 从URL提取文件名
+        // 娴犲抖RL閹绘劕褰囬弬鍥︽閸?
         auto hash = std::hash<std::string>{}(original_url);
         auto ext = std::filesystem::path(app_image_path).extension().string();
         
-        // 安全检查：验证文件扩展名
+        // 鐎瑰鍙忓Λ鈧弻銉窗妤犲矁鐦夐弬鍥︽閹碘晛鐫嶉崥?
         std::string ext_lower = ext;
         std::transform(ext_lower.begin(), ext_lower.end(), ext_lower.begin(), ::tolower);
         if (ext_lower != ".png" && ext_lower != ".jpg" && ext_lower != ".jpeg" && 
@@ -746,26 +759,26 @@ namespace proc {
 
         std::string filename = "url_" + std::to_string(hash) + (ext.empty() ? ".png" : ext);
         
-        // 保存到本地 covers 目录 (User requested to save to covers instead of assets)
-        auto local_path = std::filesystem::path(platf::appdata().string()) / "covers" / filename;
+        // 娣囨繂鐡ㄩ崚鐗堟拱閸?covers 閻╊喖缍?(User requested to save to covers instead of assets)
+        auto local_path = platf::appdata() / "covers" / filename;
         
-        // 如果文件不存在则下载
+        // 婵″倹鐏夐弬鍥︽娑撳秴鐡ㄩ崷銊ュ灟娑撳娴?
         if (!std::filesystem::exists(local_path)) {
           BOOST_LOG(info) << "Downloading image from URL: " << original_url;
-          if (!http::download_public_cover_image(original_url, local_path.string())) {
+          if (!http::download_public_cover_image(original_url, file_handler::path_to_utf8(local_path))) {
             BOOST_LOG(warning) << "Failed to download image (or rejected by magic check) from URL: " << original_url;
             return DEFAULT_APP_IMAGE_PATH;
           }
         }
         
-        app_image_path = local_path.string();
+        app_image_path = file_handler::path_to_utf8(local_path);
       } catch (const std::exception& e) {
         BOOST_LOG(warning) << "Error processing image URL: " << e.what();
         return DEFAULT_APP_IMAGE_PATH;
       }
     }
 
-    // 特殊处理：桌面壁纸
+    // 閻楄鐣╂径鍕倞閿涙碍顢戦棃銏狀梿缁?
     if (app_image_path == "desktop") {
 #ifdef _WIN32
       wchar_t wallpaperPathW[MAX_PATH];
@@ -779,33 +792,33 @@ namespace proc {
 #endif
     }
 
-    // 检查图像扩展名是否支持
-    auto image_extension = std::filesystem::path(app_image_path).extension().string();
+    // 濡偓閺屻儱娴橀崓蹇斿⒖鐏炴洖鎮曢弰顖氭儊閺€顖涘瘮
+    auto image_extension = file_handler::path_from_utf8(app_image_path).extension().string();
     boost::to_lower(image_extension);
     if (image_extension != ".png" && image_extension != ".jpg" && image_extension != ".jpeg") {
       BOOST_LOG(warning) << "Unsupported image extension: " << image_extension;
       return DEFAULT_APP_IMAGE_PATH;
     }
 
-    // 检查各种可能的图像路径
+    // 濡偓閺屻儱鎮囩粔宥呭讲閼崇晫娈戦崶鎯у剼鐠侯垰绶?
     std::vector<std::string> paths_to_check = {
-      // 1. 检查assets目录中的相对路径
-      (std::filesystem::path(SUNSHINE_ASSETS_DIR) / app_image_path).string(),
-      // 2. 检查covers目录中的相对路径
-      (std::filesystem::path(platf::appdata().string()) / "covers" / app_image_path).string(),
-      // 2. 处理旧的steam默认图像定义
+      // 1. 濡偓閺岊櫑ssets閻╊喖缍嶆稉顓犳畱閻╃顕捄顖氱窞
+      file_handler::path_to_utf8(file_handler::path_from_utf8(SUNSHINE_ASSETS_DIR) / file_handler::path_from_utf8(app_image_path)),
+      // 2. 濡偓閺岊櫓overs閻╊喖缍嶆稉顓犳畱閻╃顕捄顖氱窞
+      file_handler::path_to_utf8(platf::appdata() / "covers" / file_handler::path_from_utf8(app_image_path)),
+      // 2. 婢跺嫮鎮婇弮褏娈憇team姒涙顓婚崶鎯у剼鐎规矮绠?
       app_image_path == "./assets/steam.png" ? SUNSHINE_ASSETS_DIR "/steam.png" : "",
-      // 3. 检查绝对路径
+      // 3. 濡偓閺屻儳绮风€电鐭惧?
       app_image_path
     };
     
     for (const auto& path : paths_to_check) {
-      if (!path.empty() && std::filesystem::exists(path)) {
+      if (!path.empty() && std::filesystem::exists(file_handler::path_from_utf8(path))) {
         return path;
       }
     }
     
-    // 如果所有路径都不存在，返回默认图像
+    // 婵″倹鐏夐幍鈧張澶庣熅瀵板嫰鍏樻稉宥呯摠閸︻煉绱濇潻鏂挎礀姒涙顓婚崶鎯у剼
     BOOST_LOG(warning) << "Couldn't find app image at path ["sv << app_image_path << ']';
     return DEFAULT_APP_IMAGE_PATH;
   }
@@ -823,7 +836,7 @@ namespace proc {
 
     // Read file and update calculated SHA
     char buf[1024 * 16];
-    std::ifstream file(filename, std::ifstream::binary);
+    std::ifstream file(file_handler::path_from_utf8(filename), std::ifstream::binary);
     while (file.good()) {
       file.read(buf, sizeof(buf));
       if (!EVP_DigestUpdate(ctx.get(), buf, file.gcount())) {
@@ -899,7 +912,7 @@ namespace proc {
     pt::ptree tree;
 
     try {
-      pt::read_json(file_name, tree);
+      file_handler::read_json(file_name, tree);
 
       auto &apps_node = tree.get_child("apps"s);
       auto &env_vars = tree.get_child("env"s);
@@ -939,6 +952,7 @@ namespace proc {
         auto display_resolution = app_node.get_optional<std::string>("display-resolution"s);
         auto display_refresh_rate = app_node.get_optional<std::string>("display-refresh-rate"s);
         auto display_hdr = app_node.get_optional<std::string>("display-hdr"s);
+        auto rtx_hdr_node = app_node.get_child_optional("rtx-hdr"s);
 
         std::vector<proc::cmd_t> prep_cmds;
         if (!exclude_global_prep.value_or(false)) {
@@ -1040,6 +1054,19 @@ namespace proc {
           ctx.gamepad_mode = 0;
         }
         ctx.exit_timeout = std::chrono::seconds { exit_timeout.value_or(5) };
+        if (rtx_hdr_node) {
+          const auto mode = rtx_hdr_node->get<std::string>("mode", "inherit");
+          if (mode != "on" && mode != "off" && mode != "inherit") {
+            BOOST_LOG(warning) << "Ignoring invalid RTX HDR mode ["sv << mode << "] for app ["sv << name << ']';
+          }
+          ctx.rtx_hdr = rtsp_stream::synthetic_hdr_config_t {
+            .enabled = mode == "on",
+            .contrast = std::clamp(rtx_hdr_node->get<int>("contrast", 0), -100, 100),
+            .saturation = std::clamp(rtx_hdr_node->get<int>("saturation", 0), -100, 100),
+            .middle_gray = std::clamp(rtx_hdr_node->get<int>("middle-gray", 50), 10, 100),
+            .peak_nits = std::clamp(rtx_hdr_node->get<int>("peak-nits", 1000), 400, 1000),
+          };
+        }
 
         // ---- App Display Profile (server-side per-app display scheme) ----
         // Missing/invalid values keep the defaults (-1 / empty) so the app
@@ -1117,23 +1144,23 @@ namespace proc {
     auto proc_opt = proc::parse(file_name);
 
     if (proc_opt) {
-      // 如果当前有应用正在运行，需要保留动态环境变量（SUNSHINE_*）
-      // 这些变量是在 execute() 中动态添加的，不应该被配置文件中的环境变量覆盖
+      // 婵″倹鐏夎ぐ鎾冲閺堝绨查悽銊︻劀閸︺劏绻嶇悰宀嬬礉闂団偓鐟曚椒绻氶悾娆忓З閹胶骞嗘晶鍐ㄥ綁闁插骏绱橲UNSHINE_*閿?
+      // 鏉╂瑤绨洪崣姗€鍣洪弰顖氭躬 execute() 娑擃厼濮╅幀浣瑰潑閸旂姷娈戦敍灞肩瑝鎼存棁顕氱悮顐﹀帳缂冾喗鏋冩禒鏈佃厬閻ㄥ嫮骞嗘晶鍐ㄥ綁闁插繗顩惄?
       // 
-      // 环境变量构成说明：
-      // 1. 系统环境变量：从 boost::this_process::environment() 获取（PATH、HOME 等）
-      // 2. 配置文件环境变量：从 apps.json 的 env 节点读取（用户自定义）
-      // 3. SUNSHINE_* 动态变量：在 execute() 时设置（串流会话相关）
+      // 閻滎垰顣ㄩ崣姗€鍣洪弸鍕灇鐠囧瓨妲戦敍?
+      // 1. 缁崵绮洪悳顖氼暔閸欐﹢鍣洪敍姘矤 boost::this_process::environment() 閼惧嘲褰囬敍鍦TH閵嗕笭OME 缁涘绱?
+      // 2. 闁板秶鐤嗛弬鍥︽閻滎垰顣ㄩ崣姗€鍣洪敍姘矤 apps.json 閻?env 閼哄倻鍋ｇ拠璇插絿閿涘牏鏁ら幋鐤殰鐎规矮绠熼敍?
+      // 3. SUNSHINE_* 閸斻劍鈧礁褰夐柌蹇ョ窗閸?execute() 閺冩儼顔曠純顕嗙礄娑撳弶绁︽导姘崇樈閻╃鍙ч敍?
       // 
-      // refresh() 时的行为：
-      // - 系统环境变量和配置文件环境变量会被重新读取（反映最新状态）
-      // - SUNSHINE_* 变量会被保留（确保正在运行的进程正常工作）
+      // refresh() 閺冨墎娈戠悰灞艰礋閿?
+      // - 缁崵绮洪悳顖氼暔閸欐﹢鍣洪崪宀勫帳缂冾喗鏋冩禒鍓佸箚婢у啫褰夐柌蹇庣窗鐞氼偊鍣搁弬鎷岊嚢閸欐牭绱欓崣宥嗘Ё閺堚偓閺傛壆濮搁幀渚婄礆
+      // - SUNSHINE_* 閸欐﹢鍣烘导姘愁潶娣囨繄鏆€閿涘牏鈥樻穱婵囶劀閸︺劏绻嶇悰宀€娈戞潻娑氣柤濮濓絽鐖跺銉ょ稊閿?
       if (proc.running()) {
-        // 保存当前环境变量中的 SUNSHINE_* 动态变量
+        // 娣囨繂鐡ㄨぐ鎾冲閻滎垰顣ㄩ崣姗€鍣烘稉顓犳畱 SUNSHINE_* 閸斻劍鈧礁褰夐柌?
         const boost::process::v1::environment &current_env = proc.get_env();
         boost::process::v1::environment new_env = proc_opt->get_env();
         
-        // 将当前环境变量中的 SUNSHINE_* 变量复制到新环境变量中
+        // 鐏忓棗缍嬮崜宥囧箚婢у啫褰夐柌蹇庤厬閻?SUNSHINE_* 閸欐﹢鍣烘径宥呭煑閸掔増鏌婇悳顖氼暔閸欐﹢鍣烘稉?
         for (const auto &entry : current_env) {
           const std::string &var_name = entry.get_name();
           if (var_name.find("SUNSHINE_") == 0) {
@@ -1144,7 +1171,7 @@ namespace proc {
         proc.set_env(std::move(new_env));
       }
       else {
-        // 没有应用运行时，可以安全地替换环境变量
+        // 濞屸剝婀佹惔鏃傛暏鏉╂劘顢戦弮璁圭礉閸欘垯浜掔€瑰鍙忛崷鐗堟禌閹广垻骞嗘晶鍐ㄥ綁闁?
         proc.set_env(proc_opt->get_env());
       }
       proc.set_apps(proc_opt->get_apps());

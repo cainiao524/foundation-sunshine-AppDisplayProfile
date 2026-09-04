@@ -326,6 +326,37 @@
                 </div>
               </AccordionItem>
 
+              <AccordionItem
+                v-if="isWindows"
+                id="rtxHdr"
+                icon="fa-sun"
+                :title="t('apps.rtx_hdr')"
+                parent-id="appFormAccordion"
+              >
+                <FormField id="appRtxHdrMode" :label="t('apps.rtx_hdr_mode')" :hint="t('apps.rtx_hdr_desc')">
+                  <select id="appRtxHdrMode" class="form-select form-control-enhanced" v-model="formData['rtx-hdr'].mode">
+                    <option value="inherit">{{ t('apps.rtx_hdr_inherit') }}</option>
+                    <option value="on">{{ t('apps.rtx_hdr_on') }}</option>
+                    <option value="off">{{ t('apps.rtx_hdr_off') }}</option>
+                  </select>
+                </FormField>
+
+                <template v-if="formData['rtx-hdr'].mode === 'on'">
+                  <FormField id="appRtxHdrContrast" :label="t('apps.rtx_hdr_contrast')">
+                    <input id="appRtxHdrContrast" type="number" min="-100" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr'].contrast" />
+                  </FormField>
+                  <FormField id="appRtxHdrSaturation" :label="t('apps.rtx_hdr_saturation')">
+                    <input id="appRtxHdrSaturation" type="number" min="-100" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr'].saturation" />
+                  </FormField>
+                  <FormField id="appRtxHdrMiddleGray" :label="t('apps.rtx_hdr_middle_gray')">
+                    <input id="appRtxHdrMiddleGray" type="number" min="10" max="100" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr']['middle-gray']" />
+                  </FormField>
+                  <FormField id="appRtxHdrPeakNits" :label="t('apps.rtx_hdr_peak_nits')">
+                    <input id="appRtxHdrPeakNits" type="number" min="400" max="1000" step="50" class="form-control form-control-enhanced" v-model.number="formData['rtx-hdr']['peak-nits']" />
+                  </FormField>
+                </template>
+              </AccordionItem>
+
               <AccordionItem id="advanced" icon="fa-cogs" :title="t('apps.advanced_options')" parent-id="appFormAccordion">
                 <CheckboxField
                   v-if="isWindows"
@@ -483,6 +514,13 @@ const DEFAULT_FORM_DATA = Object.freeze({
   'display-resolution': '',
   'display-refresh-rate': '',
   'display-hdr': '',
+  'rtx-hdr': {
+    mode: 'inherit',
+    contrast: 0,
+    saturation: 0,
+    'middle-gray': 50,
+    'peak-nits': 1000,
+  },
 })
 
 const FIELD_VALIDATION_MAP = Object.freeze({
@@ -651,11 +689,11 @@ const rrHintText = computed(() => {
 // ---- end App Display Profile ----
 
 const isFormValid = computed(() => {
-  // name 字段是必填的，必须验证通过
+  // name 瀛楁鏄繀濉殑锛屽繀椤婚獙璇侀€氳繃
   const nameValid = validation.value.name?.isValid === true
   
-  // cmd 字段不是必填的，如果已验证则使用验证结果，如果未验证或为空则认为有效
-  const cmdValid = validation.value.cmd?.isValid !== false  // undefined 或 true 都认为有效
+  // cmd 瀛楁涓嶆槸蹇呭～鐨勶紝濡傛灉宸查獙璇佸垯浣跨敤楠岃瘉缁撴灉锛屽鏋滄湭楠岃瘉鎴栦负绌哄垯璁や负鏈夋晥
+  const cmdValid = validation.value.cmd?.isValid !== false  // undefined 鎴?true 閮借涓烘湁鏁?
   
   return nameValid && cmdValid && displayProfileValid.value
 })
@@ -730,6 +768,11 @@ const ensureDefaultValues = () => {
   if (isWindows.value && formData.value.gamepad === undefined) {
     formData.value.gamepad = ''
   }
+  const rtxHdr = formData.value['rtx-hdr']
+  formData.value['rtx-hdr'] = {
+    ...DEFAULT_FORM_DATA['rtx-hdr'],
+    ...(rtxHdr && typeof rtxHdr === 'object' ? rtxHdr : {}),
+  }
 }
 
 const initializeForm = (app) => {
@@ -740,15 +783,15 @@ const initializeForm = (app) => {
   )
   validation.value = {}
   imageError.value = ''
-  // 立即验证所有字段，确保表单状态正确
+  // 绔嬪嵆楠岃瘉鎵€鏈夊瓧娈碉紝纭繚琛ㄥ崟鐘舵€佹纭?
   nextTick(() => {
-    // 验证必填字段 name（总是验证）
+    // 楠岃瘉蹇呭～瀛楁 name锛堟€绘槸楠岃瘉锛?
     validateField('name')
-    // 验证 cmd 字段（如果有值则验证，没有值则标记为有效）
+    // 楠岃瘉 cmd 瀛楁锛堝鏋滄湁鍊煎垯楠岃瘉锛屾病鏈夊€煎垯鏍囪涓烘湁鏁堬級
     if (formData.value.cmd && formData.value.cmd.trim()) {
       validateField('cmd')
     } else {
-      // cmd 字段不是必填的，如果为空则标记为有效
+      // cmd 瀛楁涓嶆槸蹇呭～鐨勶紝濡傛灉涓虹┖鍒欐爣璁颁负鏈夋晥
       validation.value.cmd = { isValid: true, message: '' }
     }
   })
@@ -784,9 +827,9 @@ const validateField = (fieldName) => {
   return result
 }
 
-// 处理 cmd 字段输入，如果清空则立即更新验证状态
+// 澶勭悊 cmd 瀛楁杈撳叆锛屽鏋滄竻绌哄垯绔嬪嵆鏇存柊楠岃瘉鐘舵€?
 const handleCmdInput = () => {
-  // 如果 cmd 字段被清空，立即标记为有效（因为不是必填字段）
+  // 濡傛灉 cmd 瀛楁琚竻绌猴紝绔嬪嵆鏍囪涓烘湁鏁堬紙鍥犱负涓嶆槸蹇呭～瀛楁锛?
   if (!formData.value.cmd || !formData.value.cmd.trim()) {
     validation.value.cmd = { isValid: true, message: '' }
   }
@@ -945,7 +988,7 @@ onBeforeUnmount(cleanup)
   max-height: calc(100vh - 200px);
   overflow-y: auto;
 
-  /* 滚动条美化 */
+  /* 婊氬姩鏉＄編鍖?*/
   &::-webkit-scrollbar {
     width: 6px;
   }

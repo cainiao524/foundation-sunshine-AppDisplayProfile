@@ -478,11 +478,14 @@ namespace config {
     "auto"s,  // capture_compute_shader (automatic capability and benefit detection)
     false,  // wgc_disable_secure_desktop (disabled by default for security)
     true,  // dynamic_resolution_follow_display (default: on; matches existing behavior. Set false for legacy clients like PSVita Moonlight.)
+    "off"s,  // rtx_hdr: off | per_app
+    {},  // rtx_hdr_backend_path (absolute path to the versioned backend DLL)
   };
 
   audio_t audio {
     {},  // audio_sink
     {},  // virtual_sink
+    "vb_cable"s,  // microphone_redirect_backend
     true,  // stream audio
     true,  // stream_mic (enable microphone streaming from client)
     true,  // install_steam_drivers
@@ -1408,6 +1411,19 @@ namespace config {
     bool_f(vars, "vdd_reuse", video.vdd_reuse);
     bool_f(vars, "vdd_borrowed_texture", video.vdd_borrowed_texture);
     bool_f(vars, "vdd_vulkan_hdr_bridge", video.vdd_vulkan_hdr_bridge);
+    string_f(vars, "rtx_hdr", video.rtx_hdr);
+    if (video.rtx_hdr == "true" || video.rtx_hdr == "on" || video.rtx_hdr == "enabled" || video.rtx_hdr == "1") {
+      video.rtx_hdr = "per_app";
+    }
+    if (video.rtx_hdr.empty()) {
+      video.rtx_hdr = "off";
+    }
+    if (video.rtx_hdr != "off" && video.rtx_hdr != "per_app") {
+      BOOST_LOG(warning) << "Invalid rtx_hdr mode: ["sv << video.rtx_hdr
+                         << "], valid options are: off, per_app. Defaulting to 'off'"sv;
+      video.rtx_hdr = "off";
+    }
+    string_f(vars, "rtx_hdr_backend_path", video.rtx_hdr_backend_path);
 
     // Whether to composite the host mouse cursor into the captured frames.
     // The runtime toggle Ctrl+Alt+Shift+N (handled in input.cpp) overrides this at runtime.
@@ -1481,6 +1497,12 @@ namespace config {
 
     string_f(vars, "audio_sink", audio.sink);
     string_f(vars, "virtual_sink", audio.virtual_sink);
+    string_restricted_f(
+      vars,
+      "microphone_redirect_backend",
+      audio.microphone_redirect_backend,
+      { "vb_cable"sv, "usbip_experimental"sv, "auto"sv, "disabled"sv }
+    );
     bool_f(vars, "stream_audio", audio.stream);
     bool_f(vars, "stream_mic", audio.stream_mic);
     bool_f(vars, "install_steam_audio_drivers", audio.install_steam_drivers);
@@ -1989,6 +2011,34 @@ namespace config {
   get_clients_config() {
     std::lock_guard lock { config_file_mutex };
     return nvhttp.clients;
+  }
+
+  bool
+  get_client_touch_keyboard_enabled(const std::string &uuid) {
+    if (uuid.empty()) {
+      return false;
+    }
+    try {
+      const auto clients = nlohmann::json::parse(get_clients_config());
+      if (!clients.is_array()) {
+        return false;
+      }
+      for (const auto &entry : clients) {
+        if (!entry.is_object() || !entry.contains("uuid")) {
+          continue;
+        }
+        if (entry["uuid"] != uuid) {
+          continue;
+        }
+        return entry.contains("touch") &&
+               entry["touch"].is_object() &&
+               entry["touch"].value("enabled", false) == true;
+      }
+    }
+    catch (const std::exception &e) {
+      BOOST_LOG(warning) << "Failed to read touch profile for client: " << e.what();
+    }
+    return false;
   }
 
   bool

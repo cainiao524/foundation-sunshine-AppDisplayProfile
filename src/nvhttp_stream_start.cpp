@@ -19,7 +19,10 @@
 #include "display_device/vdd_capability.h"
 #include "hdr/session_target.h"
 #include "logging.h"
+#include "touch_keyboard_session.h"
 #include "video.h"
+
+#include <algorithm>
 
 namespace nvhttp::stream_start {
 
@@ -402,6 +405,9 @@ namespace nvhttp::stream_start {
       recovery_session.surround_params = launch_session.surround_params;
       recovery_session.continuous_audio = launch_session.continuous_audio;
       recovery_session.enable_hdr = launch_session.enable_hdr;
+      recovery_session.synthetic_hdr = launch_session.synthetic_hdr;
+      recovery_session.frame_pipeline_policy = launch_session.frame_pipeline_policy;
+      recovery_session.frame_pipeline_policy_resolved = launch_session.frame_pipeline_policy_resolved;
       recovery_session.enable_sops = launch_session.enable_sops;
       recovery_session.enable_mic = launch_session.enable_mic;
       recovery_session.use_vdd = true;
@@ -687,6 +693,23 @@ namespace nvhttp::stream_start {
     if (display_result) {
       hdr::adopt_vdd_calibration_if_needed(launch_session);
     }
+
+#ifdef _WIN32
+    // Touch-keyboard experience: when the client (or its server profile)
+    // opts in, enable the AutoInvoke registry key group for the session.
+    // The touch digitizer itself is expected to be present already (VDD /
+    // remote-software virtual digitizer); failures degrade to a log line.
+    {
+      bool touch_effective = false;
+      if (launch_session.touch_keyboard < 0) {
+        touch_effective = config::get_client_touch_keyboard_enabled(launch_session.client_cert_uuid);
+      }
+      else {
+        touch_effective = launch_session.touch_keyboard == 1;
+      }
+      touch_kb::start_session(touch_effective);
+    }
+#endif
     auto_recovery_result_t recovery_result;
     const auto probe_target = make_probe_target(intent);
     bool probe_matches_display_state = false;

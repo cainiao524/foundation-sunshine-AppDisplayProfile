@@ -67,23 +67,6 @@ target_compile_options(test_args PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
 # 注意：不会在 cmake/packaging/windows.cmake 中安装，所以不会被打包
 
 if(WIN32)
-    add_executable(stylus-input-probe WIN32
-            stylus_input_probe.cpp)
-    set_target_properties(stylus-input-probe PROPERTIES
-            CXX_STANDARD 23
-            CXX_STANDARD_REQUIRED ON)
-    target_compile_definitions(stylus-input-probe PRIVATE UNICODE _UNICODE)
-    target_link_libraries(stylus-input-probe
-            user32
-            gdi32
-            comdlg32
-            shell32
-            ${PLATFORM_LIBRARIES})
-    target_compile_options(stylus-input-probe PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
-    if(MINGW)
-        target_link_options(stylus-input-probe PRIVATE -municode)
-    endif()
-
     add_executable(vdd-frame-channel-probe vdd_frame_channel_probe.cpp)
     set_target_properties(vdd-frame-channel-probe PROPERTIES
             CXX_STANDARD 23
@@ -92,6 +75,30 @@ if(WIN32)
             setupapi
             ${PLATFORM_LIBRARIES})
     target_compile_options(vdd-frame-channel-probe PRIVATE ${SUNSHINE_COMPILE_OPTIONS})
+
+    add_executable(vtouch-poc
+            vtouch_poc.cpp
+            "${CMAKE_SOURCE_DIR}/src/remote_usb/loopback_usbip_bridge.cpp"
+            "${CMAKE_SOURCE_DIR}/src/remote_usb/virtual_touchscreen_device.cpp")
+    set_target_properties(vtouch-poc PROPERTIES
+            CXX_STANDARD 23
+            CXX_STANDARD_REQUIRED ON)
+    target_include_directories(vtouch-poc PRIVATE
+            "${CMAKE_SOURCE_DIR}")
+    target_link_libraries(vtouch-poc
+            Boost::asio
+            Boost::system
+            shell32
+            ole32
+            user32
+            advapi32
+            ws2_32
+            mswsock)
+    target_compile_options(vtouch-poc PRIVATE
+            $<$<COMPILE_LANGUAGE:CXX>:${SUNSHINE_COMPILE_OPTIONS}>)
+    if(MINGW)
+        target_link_options(vtouch-poc PRIVATE -municode)
+    endif()
 
     add_custom_target(check-vdd-ioctl-abi
             COMMAND powershell -NoProfile -ExecutionPolicy Bypass

@@ -37,6 +37,11 @@ jobs:
           ref: ${{ github.event.inputs.ref || github.ref }}
           submodules: recursive
 
+      - name: Resolve checked-out commit
+        id: source
+        shell: bash
+        run: echo "commit=$(git rev-parse HEAD)" >> "$GITHUB_OUTPUT"
+
       - name: Setup Dependencies Windows
         uses: msys2/setup-msys2@v2
         with:
@@ -160,9 +165,9 @@ jobs:
       - name: Build Windows
         shell: msys2 {0}
         env:
-          BRANCH: master
+          BRANCH: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.ref }}
           BUILD_VERSION: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}.杂鱼
-          COMMIT: ${{ github.sha }}
+          COMMIT: ${{ steps.source.outputs.commit }}
         run: |
           # add Rust to PATH for Tauri GUI build
           WINDOWS_USER=$(cmd //c "echo %USERNAME%" | tr -d '\r')
@@ -180,7 +185,6 @@ jobs:
             -DSUNSHINE_PUBLISHER_WEBSITE='https://github.com/qiin2333/Sunshine-Foundation' \
             -DSUNSHINE_PUBLISHER_ISSUE_URL='https://github.com/qiin2333/Sunshine-Foundation/issues'
           ninja -C build
-          ninja -C build sunshine-control-panel
 
       # Install Inno Setup
       - name: Install Inno Setup
@@ -328,6 +332,10 @@ jobs:
           SIGNED_SRC="signed-files/Sunshine"
           
           echo "Replacing with signed files..."
+          if [ ! -f "$SIGNED_SRC/assets/gui/alkaidlab-plugin-stylus.dll" ]; then
+            echo "Error: signed alkaidlab-plugin-stylus.dll is missing"
+            exit 1
+          fi
           cp -fv "$SIGNED_SRC/sunshine.exe"                 "$STAGING_DIR/sunshine.exe"
           cp -fv "$SIGNED_SRC/zlib1.dll"                    "$STAGING_DIR/zlib1.dll"
           cp -fv "$SIGNED_SRC/tools/sunshinesvc.exe"        "$STAGING_DIR/tools/sunshinesvc.exe"
@@ -340,6 +348,7 @@ jobs:
           cp -fv "$SIGNED_SRC/tools/audio-info.exe"         "$STAGING_DIR/tools/audio-info.exe"
           cp -fv "$SIGNED_SRC/tools/dxgi-info.exe"          "$STAGING_DIR/tools/dxgi-info.exe"
           cp -fv "$SIGNED_SRC/assets/gui/sunshine-gui.exe"  "$STAGING_DIR/assets/gui/sunshine-gui.exe"
+          cp -fv "$SIGNED_SRC/assets/gui/alkaidlab-plugin-stylus.dll" "$STAGING_DIR/assets/gui/alkaidlab-plugin-stylus.dll"
 
           # 运行 Inno Setup 编译器重新打包
           echo "Running ISCC to repackage installer..."
@@ -409,11 +418,35 @@ jobs:
             signed-component/Sunshine.Ds5Sidecar.manifest.json
           if-no-files-found: error
 
+      - name: Validate release tag target
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+          SOURCE_COMMIT: ${{ steps.source.outputs.commit }}
+        run: |
+          set -euo pipefail
+          tag_ref="refs/tags/${RELEASE_TAG}"
+          git check-ref-format "$tag_ref"
+          tag_refs=$(git ls-remote --tags origin "$tag_ref" "${tag_ref}^{}")
+          if [[ -z "$tag_refs" ]]; then
+            exit 0
+          fi
+
+          tag_commit=$(printf '%s\n' "$tag_refs" | awk -v ref="${tag_ref}^{}" '$2 == ref { print $1; exit }')
+          if [[ -z "$tag_commit" ]]; then
+            tag_commit=$(printf '%s\n' "$tag_refs" | awk -v ref="$tag_ref" '$2 == ref { print $1; exit }')
+          fi
+          if [[ "$tag_commit" != "$SOURCE_COMMIT" ]]; then
+            echo "Release tag $RELEASE_TAG does not point to the checked-out commit"
+            exit 1
+          fi
+
       # 发布到 GitHub Release
       - name: Create Release
         uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ github.event_name == 'release' && github.event.release.tag_name || github.event.inputs.release-tag }}
+          target_commitish: ${{ steps.source.outputs.commit }}
           name: ${{ github.event_name == 'release' && github.event.release.name || github.event.inputs.release-tag }} (Signed)
           files: |
             Sunshine-*-Portable-x64-Signed.zip

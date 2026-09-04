@@ -41,6 +41,9 @@ namespace video {
     std::string conversion_path { "pixel_shader" };
     std::string conversion_fallback_reason;
     std::string analysis_failure_reason;
+    std::string synthetic_hdr_backend { "none" };
+    std::string synthetic_hdr_state { "disabled" };
+    std::string synthetic_hdr_failure_reason;
   };
 
   std::uint64_t
@@ -115,6 +118,12 @@ namespace video {
        HDR encoding activates when dynamicRange > 0 and the display is operating in HDR mode */
     int dynamicRange;
 
+    /* Selected dynamic HDR format for this session, as hdr::dynamic_hdr_format_e
+       (0 none, 1 HDR10+, 2 vivid PQ, 3 vivid HLG, 4 Dolby Vision Profile 8.1).
+       Negotiated once in the RTSP ANNOUNCE from the client's reported capabilities;
+       the encode path gates Dolby Vision RPU injection on it. */
+    int dynamic_hdr_format = 0;
+
     int chromaSamplingType;  // 0 - 4:2:0, 1 - 4:4:4
 
     int enableIntraRefresh;  // 0 - disabled, 1 - enabled
@@ -137,6 +146,25 @@ namespace video {
     // Remote display target. This adjusts only metadata sent to the client;
     // it must never mutate a physical host display's EDID, HDR state, or ICC.
     hdr::client_display_capabilities_t hdr_capabilities;
+
+    // Orthogonal session contracts. Keep these defaulted fields after the
+    // legacy aggregate-initialized fields above. During migration, callers
+    // that have not resolved them explicitly retain legacy behavior through
+    // effective_frame_pipeline_policy(). Capture backends must consume the
+    // effective capture contract instead of reading dynamicRange directly.
+    platf::frame_pipeline_policy_t frame_pipeline_policy;
+    bool frame_pipeline_policy_resolved = false;
+    platf::pre_encode_filter_e pre_encode_filter = platf::pre_encode_filter_e::none;
+    platf::pre_encode_filter_config_t pre_encode_filter_config;
+    std::string pre_encode_filter_backend_path;
+
+    platf::frame_pipeline_policy_t
+    effective_frame_pipeline_policy() const {
+      if (frame_pipeline_policy_resolved) {
+        return frame_pipeline_policy;
+      }
+      return platf::resolve_frame_pipeline_policy(dynamicRange, false);
+    }
 
     // Helper to get effective framerate as double
     double get_effective_framerate() const {

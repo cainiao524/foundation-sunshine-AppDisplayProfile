@@ -776,6 +776,59 @@ editing the `conf` file in a text editor. Use the examples as reference.
     </tr>
 </table>
 
+### microphone_redirect_backend
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Selects how Moonlight microphone PCM is exposed to Windows applications.
+            `vb_cable` writes to the VB-CABLE render endpoint and applications capture its paired endpoint.
+            `usbip_experimental` injects PCM directly into the signed Virtual Device Host microphone IN endpoint;
+            it does not use a render-to-capture loopback. `auto` tries USB/IP first and falls back to VB-CABLE.
+            `disabled` rejects microphone redirection while leaving the Moonlight microphone feature setting intact.
+            @warning{The USB/IP backend is experimental and currently uses the DualSense composite prototype profile.}
+            @note{This option is only supported on Windows.}
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            vb_cable
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            microphone_redirect_backend = auto
+            @endcode</td>
+    </tr>
+</table>
+
+### stream_mic
+
+<table>
+    <tr>
+        <td>Description</td>
+        <td colspan="2">
+            Whether Sunshine accepts microphone audio from compatible Moonlight clients and redirects it to the
+            configured Windows microphone backend.
+        </td>
+    </tr>
+    <tr>
+        <td>Default</td>
+        <td colspan="2">@code{}
+            enabled
+            @endcode</td>
+    </tr>
+    <tr>
+        <td>Example</td>
+        <td colspan="2">@code{}
+            stream_mic = disabled
+            @endcode</td>
+    </tr>
+</table>
+
 ### install_steam_audio_drivers
 
 <table>
@@ -2525,12 +2578,11 @@ editing the `conf` file in a text editor. Use the examples as reference.
             Feed 10-bit 4:4:4 frames to NVENC through a block-linear CUDA array instead of the pitch-linear
             device pointer.
             @note{Windows only. Requires a driver exposing NVENC 13.1 or newer; on older drivers Sunshine
-            logs a message and keeps using the device pointer.}
-            @warning{Experimental. Some drivers produce ghosted output, and some stall while Sunshine probes
-            encoders at startup — which happens before the web UI binds, so the UI never becomes reachable and
-            you cannot turn this back off from there. Recover by stopping the Sunshine service, setting
-            `nvenc_cuda_array_input = disabled` in `sunshine.conf`, and starting the service again.
-            Leave it disabled unless you are helping test the 4:4:4 path.}
+            logs a message and keeps using the device pointer. Encoder probing always uses the device
+            pointer, so this option only affects real streaming sessions.}
+            @warning{Experimental. Some drivers produce ghosted output with the array path. Leave it
+            disabled unless you are helping test the 4:4:4 path. If a stream misbehaves, disable
+            `nvenc_cuda_array_input` and restart the stream.}
         </td>
     </tr>
     <tr>

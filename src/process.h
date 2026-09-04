@@ -93,6 +93,7 @@ namespace proc {
     std::string display_resolution;   ///< Fixed resolution "WxH" (advanced option); empty = not set
     std::string display_refresh_rate; ///< Fixed refresh rate in Hz (advanced option); empty = not set
     int display_hdr {-1};             ///< -1=inherit, 0=force off, 1=force on (advanced option); always overrides the client hdrMode when set
+    std::optional<rtsp_stream::synthetic_hdr_config_t> rtx_hdr;
   };
 
   class proc_t {
@@ -145,6 +146,8 @@ namespace proc {
     get_app_cmd(int app_id);
     std::string
     get_last_run_app_name();
+    std::optional<rtsp_stream::synthetic_hdr_config_t>
+    get_app_rtx_hdr_config(int app_id) const;
     const boost::process::v1::environment &
     get_env() const;
     boost::process::v1::environment &
